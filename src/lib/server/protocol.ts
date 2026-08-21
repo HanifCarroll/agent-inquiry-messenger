@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { OpenRouter } from '@openrouter/sdk';
 import type { ChatRequest, ChatRequestEffort, ChatResult, Model as SDKModel } from '@openrouter/sdk/models';
-import { screenNames, validScreenNames } from '$lib/identity';
+import { screenNames, validScreenNames } from '../identity';
 
 export type Model = SDKModel;
 export type DecisionMode = 'consensus' | 'vote';
