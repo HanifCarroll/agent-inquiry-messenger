@@ -170,7 +170,7 @@ export function chatCapable(model: Pick<Model, 'architecture'>) {
   const output = model.architecture?.outputModalities ?? [];
   return input.includes('text') && output.length === 1 && output[0] === 'text';
 }
-export async function catalog(): Promise<Model[]> { const pages = await openRouter().models.list(); const models: Model[] = []; for await (const page of pages) models.push(...page.result.data); return models.filter(chatCapable); }
+export async function catalog(): Promise<Model[]> { const pages = await openRouter().models.list(); const models: Model[] = []; for await (const page of pages) models.push(...page.result.data); return models.filter(model => chatCapable(model) && !model.id.endsWith(':batch')); }
 export function price(model: Model) { const perMillion = (value: string) => { const amount = Number(value) * 1_000_000; return Number.isFinite(amount) && amount >= 0 ? amount : null; }; return { input: perMillion(model.pricing.prompt), output: perMillion(model.pricing.completion) }; }
 
 export function latestSupportUnanimous(decisions: Decision[] | ChatEvent[], participantCount: number): string | null {
