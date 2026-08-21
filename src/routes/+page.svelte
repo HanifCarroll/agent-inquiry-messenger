@@ -328,7 +328,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <div class="participant-list">
             {#each selected as seat, index (seat.id)}
               {@const activity = activities.find((item) => item.participant === index)}
-              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small>{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
+              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-model" title={selectedModels[index]?.name}>{selectedModels[index]?.name}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
             {/each}
             <div class="participant you" class:offline={!running}><span class="status-dot">●</span><span><b>You</b><small>{running ? 'online' : 'offline'}</small></span></div>
           </div>
@@ -516,10 +516,11 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   .participant { min-height: 45px; display: flex; align-items: flex-start; gap: 7px; padding: 7px 3px; border-bottom: 1px dotted #aaa9a1; }
   .participant > span:last-child { min-width: 0; display: grid; }
   .participant b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--link-blue); font-size: 11px; }
-  .participant small { margin-top: 2px; color: var(--ink-tertiary); }
+  .participant small { margin-top: 2px; overflow: hidden; color: var(--ink-tertiary); text-overflow: ellipsis; white-space: nowrap; }
+  .participant-model { font-size: 10px; }
   .participant.you b { color: var(--screen-red); }
   .participant.offline .status-dot { color: var(--ink-muted); }
-  .participant.working small { color: var(--support-green); font-weight: 700; }
+  .participant.working .participant-status { color: var(--support-green); font-weight: 700; }
   .room-info { margin-top: auto; padding-top: 10px; border-top: 1px solid #aaa9a1; color: var(--ink-secondary); }
   .room-info summary { color: var(--link-blue); cursor: pointer; font-weight: 700; }
   .room-info ul { margin: 8px 0 0; padding: 0; list-style: none; }
@@ -559,16 +560,19 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   .chat-footer button { min-width: 84px; padding: 4px 10px; font-size: 10px; }
 
   @media (max-width: 760px) {
-    .desktop { padding: 6px; overflow: auto; }
-    .setup-window, .chat-window { width: calc(100vw - 12px); height: calc(100vh - 12px); min-height: 0; }
+    .desktop { min-height: 100dvh; display: block; padding: 6px; overflow: visible; }
+    .setup-window { width: 100%; height: auto; min-height: calc(100dvh - 12px); }
+    .chat-window { width: 100%; height: calc(100dvh - 12px); min-height: 0; }
     .setup-heading { padding: 10px 12px; }
     .setup-heading h1 { font-size: 18px; }
     .logo-lockup { width: 48px; height: 40px; }
-    .setup-workspace { grid-template-columns: 1fr; grid-template-rows: minmax(280px, auto) minmax(260px, 1fr); overflow: auto; }
+    .setup-workspace { display: block; overflow: visible; }
     .room-builder { overflow: visible; }
+    .directory { display: block; margin-top: 8px; }
+    .roster { max-height: 420px; }
     .setup-controls { grid-template-columns: 1fr; }
     .mode-picker { grid-column: auto; }
-    .setup-footer { position: sticky; bottom: 0; }
+    .setup-footer { position: static; }
     .footer-status { font-size: 10px; }
     .chat-window { grid-template-rows: auto auto auto minmax(0, 1fr) auto auto; }
     .room-banner { align-items: flex-start; }
@@ -589,8 +593,10 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     .setup-heading p:last-child, .room-state b, .composer label span { display: none; }
     .setup-workspace { padding: 4px; gap: 4px; }
     .room-builder, .directory { padding: 9px; }
-    .setup-footer { align-items: stretch; flex-direction: column; gap: 5px; }
-    .primary-button { width: 100%; }
+    .mode-picker, .directory-tools { grid-template-columns: 1fr; }
+    .setup-footer { gap: 8px; }
+    .footer-status { flex: 1; }
+    .primary-button { min-width: 112px; }
     .buddy-row { grid-template-columns: auto minmax(0, 1fr) 30px; }
     .pricing { display: none; }
     .composer { grid-template-columns: minmax(0, 1fr) 82px; gap: 5px; padding: 6px; }

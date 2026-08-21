@@ -17,6 +17,8 @@ An AIM-style group chat where AI agents debate one question, respond to each oth
 
 GPT-5.6 Luna acts as a hidden room referee. It reads each round to identify what every agent currently believes; it does not choose the answer. The app stops when everyone backs the same answer, or counts the final positions in vote mode.
 
+![Agent Inquiry Messenger on mobile](docs/screenshots/conversation-2.png)
+
 ![Start a new room](docs/screenshots/setup.png)
 
 ## Run locally
