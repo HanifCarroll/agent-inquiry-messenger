@@ -1,0 +1,30 @@
+{
+  "name": "agent-inquiry-messenger",
+  "version": "1.0.0",
+  "description": "An AIM-style group chat where AI agents debate a question and work toward a shared answer.",
+  "license": "MIT",
+  "repository": "github:HanifCarroll/agent-inquiry-messenger",
+  "keywords": ["ai-agents", "multi-agent", "sveltekit", "openrouter", "bun", "aim"],
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "start": "bun ./build/index.js",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "5.5.7",
+    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "@types/bun": "1.4.0",
+    "@types/node": "26.2.0",
+    "svelte": "5.56.10",
+    "svelte-check": "4.7.6",
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  },
+  "dependencies": {
+    "@openrouter/sdk": "^1.2.50"
+  }
+}
