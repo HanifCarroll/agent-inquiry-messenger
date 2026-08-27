@@ -9,7 +9,7 @@ export type ChatEvent = Record<string, any>;
 export const INTERPRETER_MODEL = 'openai/gpt-5.6-luna';
 export const USER_KEY_HEADER = 'x-openrouter-key';
 export const GUEST_MODEL_PATTERN = /:free$/;
-export const GUEST_CHAT_PREFERRED_MODELS = ['dots/dots3-note-preview:free', 'z-ai/glm-5.2:free', 'minimax/minimax-m3:free', 'google/gemma-4-26b-a4b-it:free'];
+export const GUEST_CHAT_PREFERRED_MODELS = ['dots-studio/dots-3-note-preview:free', 'z-ai/glm-5.2:free', 'minimax/minimax-m3:free', 'google/gemma-4-26b-a4b-it:free'];
 const GUEST_CHAT_EXCLUDED_MODELS = new Set(['thinkingmachines/inkling-small:free', 'thinkingmachines/inkling:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3.5-lightning:free']);
 export function guestChatCapable(model: Pick<Model, 'id'>) { return !GUEST_CHAT_EXCLUDED_MODELS.has(model.id); }
 export function orderGuestChatModels<T extends Pick<Model, 'id'>>(models: T[]): T[] { return models.toSorted((a, b) => { const aRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(a.id); const bRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(b.id); return (aRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : aRank) - (bRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : bRank); }); }
