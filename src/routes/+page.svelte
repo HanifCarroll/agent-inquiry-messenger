@@ -259,7 +259,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <div class="pane-heading"><h2 id="room-builder-title">Room setup</h2><span>{ready ? 'Ready to sign on' : 'Complete the room details'}</span></div>
 
           <label class="field-label" for="question">Question for the room</label>
-          <textarea id="question" bind:value={question} rows="4" placeholder="What should the room talk through?"></textarea>
+          <textarea id="question" bind:value={question} rows="4" placeholder="What’s the best harmless superpower for everyday life?"></textarea>
 
           <div class="setup-controls">
             <fieldset class="mode-picker">
