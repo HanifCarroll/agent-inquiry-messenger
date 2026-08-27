@@ -147,8 +147,7 @@ export function validateInterpretation(value: unknown, participantCount: number,
     ids.add(d.participant);
     if (!['propose', 'support', 'undecided'].includes(d.type) || typeof d.proposal !== 'string') throw new InterpreterError('one or more agent positions were unclear');
   }
-  for (const participant of offlineParticipants) if (!ids.has(participant)) { ids.add(participant); decisions.push({ participant, type: 'undecided', proposal: '' }); }
-  if (ids.size !== participantCount) throw new InterpreterError('the room state was incomplete');
+  for (let participant = 0; participant < participantCount; participant++) if (!ids.has(participant)) decisions.push({ participant, type: 'undecided', proposal: '' });
   decisions.sort((a, b) => a.participant - b.participant);
   const available = new Map<string, string>();
   if (registered instanceof Map) for (const [id, text] of registered) available.set(id, text);

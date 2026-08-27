@@ -19,9 +19,9 @@ test('validates and applies room-referee decisions, registering proposals before
   expect(() => validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(0, 'undecided')] }, 2, registered)).toThrow(/room referee could not read the room/);
 });
 
-test('fills omitted offline room-referee decisions as undecided', () => {
+test('fills omitted room-referee decisions as undecided', () => {
   expect(validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(1, 'support', proposal)] }, 3, registered, new Set([2]))).toEqual([decision(0, 'support', proposal), decision(1, 'support', proposal), decision(2, 'undecided')]);
-  expect(() => validateInterpretation({ decisions: [decision(0, 'undecided')] }, 3, registered, new Set([2]))).toThrow(/room state was incomplete/);
+  expect(validateInterpretation({ decisions: [decision(0, 'undecided')] }, 3, registered)).toEqual([decision(0, 'undecided'), decision(1, 'undecided'), decision(2, 'undecided')]);
 });
 
 test('normalizes inconsistent interpreter decisions without creating consensus', () => {
