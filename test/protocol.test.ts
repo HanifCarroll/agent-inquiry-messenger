@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_CHAT_PREFERRED_MODELS, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, guestChatCapable, isGuestModel, latestSupportUnanimous, orderGuestChatModels, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
 import { CHAT_VOICES, SCREEN_NAME_POOL, personalityIds, validPersonalityIds, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
@@ -101,6 +101,11 @@ test('states the final outcome concisely', () => {
   expect(outcomeText({ status: 'TIE' }, 3)).toBe('the vote ended in a tie.');
 });
 
+test('orders guest chat models by preference and excludes agentic-only Inkling Small', () => {
+  expect(guestChatCapable({ id: 'thinkingmachines/inkling-small:free' })).toBe(false);
+  expect(orderGuestChatModels([{ id: 'other:free' }, { id: GUEST_CHAT_PREFERRED_MODELS[0] }, { id: GUEST_CHAT_PREFERRED_MODELS[2] }]).map(model => model.id)).toEqual([GUEST_CHAT_PREFERRED_MODELS[0], GUEST_CHAT_PREFERRED_MODELS[2], 'other:free']);
+});
+
 test('enforces guest models while leaving Luna on the server key', () => {
   expect(GUEST_MODEL_PATTERN.test('openai/gpt-oss-20b:free')).toBe(true);
   expect(isGuestModel('openai/gpt-5.6-luna')).toBe(false);
@@ -160,7 +165,8 @@ test('paces replies and follows the transcript only near the bottom', () => {
 test('replaces a failed first model and emits the replacement reply', async () => {
   const model = (id: string) => ({ id, name: id, pricing: { prompt: '0', completion: '0' }, architecture: { inputModalities: ['text'], outputModalities: ['text'] } }) as Model;
   const events: any[] = [];
-  const result = await run('participant', 'interpreter', 'question', [model('a'), model('b')], 1, false, 'consensus', event => events.push(event), [], ['alpha', 'bravo'], personalityIds(2), undefined, async (_key, selected) => {
+  const result = await run('participant', 'interpreter', 'question', [model('a'), model('b')], 1, false, 'consensus', event => events.push(event), [], ['alpha', 'bravo'], personalityIds(2), undefined, async (_key, selected, _name, _voice, _prompt, _research, onRateLimit) => {
+    if (selected.id === 'a') onRateLimit?.(60_000);
     if (selected.id !== 'c') throw new Error('participant model failed');
     return { message: 'i agree', usage: { cost: 0 } };
   }, [model('c')]);

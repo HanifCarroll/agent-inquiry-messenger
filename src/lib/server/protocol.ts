@@ -9,6 +9,10 @@ export type ChatEvent = Record<string, any>;
 export const INTERPRETER_MODEL = 'openai/gpt-5.6-luna';
 export const USER_KEY_HEADER = 'x-openrouter-key';
 export const GUEST_MODEL_PATTERN = /:free$/;
+export const GUEST_CHAT_PREFERRED_MODELS = ['z-ai/glm-5.2:free', 'minimax/minimax-m3:free', 'google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'thinkingmachines/inkling:free'];
+const GUEST_CHAT_EXCLUDED_MODELS = new Set(['thinkingmachines/inkling-small:free']);
+export function guestChatCapable(model: Pick<Model, 'id'>) { return !GUEST_CHAT_EXCLUDED_MODELS.has(model.id); }
+export function orderGuestChatModels<T extends Pick<Model, 'id'>>(models: T[]): T[] { return models.toSorted((a, b) => { const aRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(a.id); const bRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(b.id); return (aRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : aRank) - (bRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : bRank); }); }
 
 export function isGuestModel(id: string) { return GUEST_MODEL_PATTERN.test(id); }
 export function selectedModelsAllowed(ids: string[], guest: boolean) { return !guest || ids.every(isGuestModel); }
@@ -64,6 +68,7 @@ export function rateLimitWaitMs(error: unknown, now = Date.now()): number | null
 
 const MAX_RATE_LIMIT_RETRIES = 3;
 const PARTICIPANT_TIMEOUT_MS = 61_000;
+const GUEST_PARTICIPANT_TIMEOUT_MS = 30_000;
 export async function retryRateLimited<T>(operation: () => Promise<T>, onRateLimit?: (waitMs: number) => void, waitFor = rateLimitWaitMs, sleepFor = sleep): Promise<T> {
   for (let retry = 0; ; retry++) {
     try { return await operation(); }
@@ -184,7 +189,7 @@ export function chatCapable(model: Pick<Model, 'architecture'>) {
   const output = model.architecture?.outputModalities ?? [];
   return input.includes('text') && output.length === 1 && output[0] === 'text';
 }
-export async function catalog(apiKey = key(), guest = false): Promise<Model[]> { const pages = await openRouter(apiKey).models.list(); const models: Model[] = []; for await (const page of pages) models.push(...page.result.data); return models.filter(model => chatCapable(model) && !model.id.endsWith(':batch') && (!guest || isGuestModel(model.id))); }
+export async function catalog(apiKey = key(), guest = false): Promise<Model[]> { const pages = await openRouter(apiKey).models.list(); const models: Model[] = []; for await (const page of pages) models.push(...page.result.data); const filtered = models.filter(model => chatCapable(model) && !model.id.endsWith(':batch') && (!guest || (isGuestModel(model.id) && guestChatCapable(model)))); return guest ? orderGuestChatModels(filtered) : filtered; }
 export function price(model: Model) { const perMillion = (value: string) => { const amount = Number(value) * 1_000_000; return Number.isFinite(amount) && amount >= 0 ? amount : null; }; return { input: perMillion(model.pricing.prompt), output: perMillion(model.pricing.completion) }; }
 
 export function latestSupportUnanimous(decisions: Decision[] | ChatEvent[], participantCount: number): string | null {
@@ -217,7 +222,7 @@ export async function run(participantApiKey: string, interpreterApiKey: string, 
   emit({ type: 'run', question, models: models.map(m => m.id), screen_names: names, personality_ids: chosenPersonalityIds, interpreter: INTERPRETER_MODEL, debate_turns: debateTurns, research, mode, started_at: started, max_calls: maxCalls });
   const waitMessage = (waitMs: number) => `got rate-limited — retrying in ${Math.ceil(waitMs / 1000)}s…`;
   const pace = async (startedAt: number, message: string) => { const remaining = responseDelayMs(message) - (Date.now() - startedAt); if (remaining > 0) await sleep(remaining); };
-  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await participantReply(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, model_name: model.name, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
+  const consume = async (model: Model, participant: number, prompt: string, useResearch = false, failOnRateLimit = false) => { calls++; const result = await participantReply(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => { emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, model_name: model.name, screen_name: names[participant], message: waitMessage(waitMs) }); if (failOnRateLimit) throw new Error(`${model.name} was rate-limited`); }); cost += Number(result.usage?.cost ?? 0); return result; };
   const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room', message: waitMessage(waitMs) })); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } finally { emit({ type: 'activity', status: 'done', phase, rotation, participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Luna', message: '' }); } };
   const finish = (final: ChatEvent) => { final.outcome = outcomeText(final, models.length); final.observer = 'Luna'; emit(final); return { events: [...messages, final], final }; };
   const transcript = () => messages.map(m => `${m.participant === 'human' ? 'You' : names[m.participant]}: ${m.message}`).join('\n');
@@ -228,8 +233,8 @@ export async function run(participantApiKey: string, interpreterApiKey: string, 
       emit({ type: 'activity', phase, rotation, participant, model: model.id, model_name: model.name, screen_name: names[participant], message: useResearch ? 'is looking something up…' : 'is typing…' });
       try {
         const result = await new Promise<Awaited<ReturnType<typeof consume>>>((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error(`${names[participant]} timed out`)), PARTICIPANT_TIMEOUT_MS);
-          (async () => { try { await beforeReply?.(); resolve(await consume(model, participant, prompt, useResearch)); } catch (error) { reject(error); } finally { clearTimeout(timer); } })();
+          const timer = setTimeout(() => reject(new Error(`${names[participant]} timed out`)), replacementModels.length ? GUEST_PARTICIPANT_TIMEOUT_MS : PARTICIPANT_TIMEOUT_MS);
+          (async () => { try { await beforeReply?.(); resolve(await consume(model, participant, prompt, useResearch, replacementModels.length > 0)); } catch (error) { reject(error); } finally { clearTimeout(timer); } })();
         });
         await pace(Date.now(), result.message);
         return result;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { personalityIds as generatePersonalityIds, SCREEN_NAME_POOL } from '../src/lib/identity';
+import { GUEST_CHAT_PREFERRED_MODELS } from '../src/lib/server/protocol';
 
 type Json = Record<string, any>;
 
@@ -52,16 +53,9 @@ async function responseJson(response: Response): Promise<Json> {
 function automaticModels(models: Json[], count = 2): string[] {
   const free = models.filter(model => typeof model.id === 'string' && model.id.endsWith(':free'));
   const candidates = free.length >= count ? free : models;
-  const preferred = [
-    'z-ai/glm-5.2:free',
-    'minimax/minimax-m3:free',
-    'google/gemma-4-26b-a4b-it:free',
-    'nvidia/nemotron-3-super-120b-a12b:free',
-    'thinkingmachines/inkling:free'
-  ];
   candidates.sort((a, b) => {
-    const aRank = preferred.indexOf(a.id); const bRank = preferred.indexOf(b.id);
-    return (aRank < 0 ? preferred.length : aRank) - (bRank < 0 ? preferred.length : bRank);
+    const aRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(a.id); const bRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(b.id);
+    return (aRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : aRank) - (bRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : bRank);
   });
   const chosen: Json[] = [];
   const providers = new Set<string>();
