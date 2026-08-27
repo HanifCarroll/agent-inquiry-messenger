@@ -10,6 +10,7 @@ export const INTERPRETER_MODEL = 'z-ai/glm-5.3-flash';
 export const HOSTED_MODEL_ID = 'deepseek/deepseek-v4-flash';
 export const HOSTED_PARTICIPANT_COUNT = 3;
 export const HOSTED_DEBATE_TURNS = 8;
+export const INTERPRETER_REASONING: ChatRequestEffort = 'low';
 export const USER_KEY_HEADER = 'x-openrouter-key';
 
 export function selectedModelsAllowed(ids: string[], guest: boolean) {
@@ -110,8 +111,7 @@ export function participantReasoning(model: Pick<Model, 'reasoning'>): ChatReque
 }
 
 async function request(apiKey: string, model: string, messages: ChatRequest['messages'], plugin = false, structured = false, reasoning: ChatRequestEffort = 'none', onRateLimit?: (waitMs: number) => void) {
-  const chatRequest: any = { model, messages, maxTokens: structured ? 1200 : 100, stream: false, ...(plugin ? { plugins: [{ id: 'web', engine: 'exa', maxResults: 5 }] } : {}) };
-  if (!structured) chatRequest.reasoning = { effort: reasoning };
+  const chatRequest: any = { model, messages, maxTokens: structured ? 2000 : 100, stream: false, reasoning: { effort: reasoning }, ...(plugin ? { plugins: [{ id: 'web', engine: 'exa', maxResults: 5 }] } : {}) };
   if (structured) {
     chatRequest.responseFormat = { type: 'json_schema', jsonSchema: { name: 'room_decisions', strict: true, schema: interpreterSchema } };
     chatRequest.provider = { requireParameters: true };
@@ -180,7 +180,7 @@ export async function askParticipant(apiKey: string, model: Model, screenName: s
 export async function interpret(apiKey: string, question: string, participantCount: number, registered: Map<string, string>, transcriptMessages: ChatEvent[], names: string[], onRateLimit?: (waitMs: number) => void, offlineParticipants = new Set<number>()) {
   const proposals = formatProposalList([...registered.values()]);
   const transcript = transcriptMessages.map(message => `${message.participant === 'human' ? 'Human (not a participant)' : `Participant ${message.participant} (${names[message.participant]})`}: ${message.message}`).join('\n');
-  const result = await request(apiKey, INTERPRETER_MODEL, [{ role: 'system', content: INTERPRETER_SYSTEM }, { role: 'user', content: `Question:\n${question}\n\nOffline participant IDs (do not invent positions for them): ${[...offlineParticipants].join(', ') || '(none)'}\n\nRegistered proposals (exact text):\n${proposals}\n\nFull chat in chronological order:\n${transcript}\n\nReport every online participant's latest current position now; offline participants may be omitted.` }], false, true, 'none', onRateLimit);
+  const result = await request(apiKey, INTERPRETER_MODEL, [{ role: 'system', content: INTERPRETER_SYSTEM }, { role: 'user', content: `Question:\n${question}\n\nOffline participant IDs (do not invent positions for them): ${[...offlineParticipants].join(', ') || '(none)'}\n\nRegistered proposals (exact text):\n${proposals}\n\nFull chat in chronological order:\n${transcript}\n\nReport every online participant's latest current position now; offline participants may be omitted.` }], false, true, INTERPRETER_REASONING, onRateLimit);
   let parsed: unknown;
   try { parsed = parseJson(result.content); } catch { throw new InterpreterError('the latest positions were unclear', result.usage); }
   try { return { decisions: applyInterpretation(parsed, participantCount, registered, offlineParticipants), usage: result.usage }; } catch (error) { if (error instanceof InterpreterError) error.usage = result.usage; throw error; }

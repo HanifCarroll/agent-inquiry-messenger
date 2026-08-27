@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, canReachConsensus, chatCapable, debatePrompt, formatProposalList, HOSTED_DEBATE_TURNS, HOSTED_MODEL_ID, HOSTED_PARTICIPANT_COUNT, INTERPRETER_MODEL, InterpreterError, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, canReachConsensus, chatCapable, debatePrompt, formatProposalList, HOSTED_DEBATE_TURNS, HOSTED_MODEL_ID, HOSTED_PARTICIPANT_COUNT, INTERPRETER_MODEL, INTERPRETER_REASONING, InterpreterError, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
 import { CHAT_VOICES, SCREEN_NAME_POOL, personalityIds, validPersonalityIds, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
@@ -115,6 +115,7 @@ test('enforces the fixed hosted DeepSeek guest room while preserving connected c
   expect(selectedModelsAllowed(['openai/gpt-5.6-luna'], true)).toBe(false);
   expect(selectedModelsAllowed(['openai/gpt-5.6-luna'], false)).toBe(true);
   expect(INTERPRETER_MODEL).toBe('z-ai/glm-5.3-flash');
+  expect(INTERPRETER_REASONING).toBe('low');
   expect(new InterpreterError('unclear').message).toContain('room referee');
   expect(requestApiKey('sk-or-user', { OPENROUTER_API_KEY: 'sk-or-server' })).toEqual({ apiKey: 'sk-or-user', guest: false });
   expect(requestApiKey(null, { OPENROUTER_API_KEY: 'sk-or-server' })).toEqual({ apiKey: 'sk-or-server', guest: true });
