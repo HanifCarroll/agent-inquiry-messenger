@@ -107,7 +107,7 @@ test('states the final outcome concisely', () => {
 });
 
 test('enforces the fixed hosted DeepSeek guest room while preserving connected choices', () => {
-  expect(HOSTED_MODEL_ID).toBe('deepseek/deepseek-v4-flash');
+  expect(HOSTED_MODEL_ID).toBe('deepseek/deepseek-v4-flash-0731');
   expect(HOSTED_PARTICIPANT_COUNT).toBe(3);
   expect(HOSTED_DEBATE_TURNS).toBe(8);
   expect(selectedModelsAllowed(Array(3).fill(HOSTED_MODEL_ID), true)).toBe(true);
