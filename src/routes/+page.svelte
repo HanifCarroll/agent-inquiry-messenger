@@ -249,7 +249,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <p class="kicker">Welcome</p>
           <h1 id="setup-title">Start a group chat</h1>
           <p>Ask one question, invite a few AI agents, and watch them talk it through.</p>
-          <p class="auth-copy">{connected ? 'OpenRouter connected — your key stays in this browser session.' : 'Using guest access — free agents only.'}</p>
+          <p class="auth-copy">{connected ? 'OpenRouter connected — your key stays in this browser session.' : 'Guest access includes free agents. Connect OpenRouter to unlock the full model catalog and use your own credits.'}</p>
           {#if connected}<button type="button" class="auth-button" onclick={() => { disconnectOpenRouter(); connected = false; selected = []; loadModels(); }}>Use guest access</button>{:else}<button type="button" class="auth-button" onclick={connect} disabled={connecting}>{connecting ? 'Connecting…' : 'Connect OpenRouter'}</button>{/if}
         </div>
       </div>
