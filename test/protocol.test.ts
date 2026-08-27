@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, requestApiKey, openingPrompt, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, requestApiKey, openingPrompt, retryRateLimited, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
 import { SCREEN_NAME_POOL, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
@@ -117,8 +117,22 @@ test('shows the useful upstream provider error', () => {
 
 test('uses OpenRouter reset timing for rate limits and a one-minute fallback', () => {
   expect(rateLimitWaitMs({ statusCode: 429, headers: new Headers({ 'retry-after': '3' }) }, 0)).toBe(3250);
+  expect(rateLimitWaitMs({ statusCode: 429, headers: new Headers({ 'x-ratelimit-reset': '1700000003' }) }, 1700000000000)).toBe(3250);
   expect(rateLimitWaitMs(new Error('Rate limit exceeded: new accounts are limited to 10 requests per minute.'))).toBe(60250);
   expect(rateLimitWaitMs(new Error('Provider returned error'))).toBeNull();
+});
+
+test('does not hang forever on repeated rate limits', async () => {
+  let attempts = 0;
+  const waits: number[] = [];
+  await expect(retryRateLimited(
+    async () => { attempts++; throw { statusCode: 429 }; },
+    waitMs => waits.push(waitMs),
+    () => 0,
+    async () => {}
+  )).rejects.toMatchObject({ statusCode: 429 });
+  expect(attempts).toBe(4);
+  expect(waits).toEqual([0, 0, 0]);
 });
 
 test('paces replies and follows the transcript only near the bottom', () => {

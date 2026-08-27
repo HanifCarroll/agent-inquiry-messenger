@@ -49,7 +49,30 @@ export function rateLimitWaitMs(error: unknown, now = Date.now()): number | null
     const resetAt = Date.parse(retryAfter);
     if (Number.isFinite(resetAt)) return Math.max(0, resetAt - now) + RETRY_BUFFER_MS;
   }
+  const reset = header('x-ratelimit-reset') ?? header('x-rate-limit-reset');
+  if (nonempty(reset)) {
+    const resetValue = Number(reset);
+    if (Number.isFinite(resetValue) && resetValue >= 0) {
+      const resetAt = resetValue < 1e12 ? resetValue * 1000 : resetValue;
+      return Math.max(0, resetAt - now) + RETRY_BUFFER_MS;
+    }
+    const resetAt = Date.parse(reset);
+    if (Number.isFinite(resetAt)) return Math.max(0, resetAt - now) + RETRY_BUFFER_MS;
+  }
   return 60_000 + RETRY_BUFFER_MS;
+}
+
+const MAX_RATE_LIMIT_RETRIES = 3;
+export async function retryRateLimited<T>(operation: () => Promise<T>, onRateLimit?: (waitMs: number) => void, waitFor = rateLimitWaitMs, sleepFor = sleep): Promise<T> {
+  for (let retry = 0; ; retry++) {
+    try { return await operation(); }
+    catch (error) {
+      const waitMs = waitFor(error);
+      if (waitMs === null || retry >= MAX_RATE_LIMIT_RETRIES) throw error;
+      onRateLimit?.(waitMs);
+      await sleepFor(waitMs);
+    }
+  }
 }
 
 export function responseDelayMs(message: string, random = Math.random()): number {
@@ -88,16 +111,10 @@ async function request(apiKey: string, model: string, messages: ChatRequest['mes
     chatRequest.responseFormat = { type: 'json_schema', jsonSchema: { name: 'luna_decisions', strict: true, schema: interpreterSchema } };
     chatRequest.provider = { requireParameters: true };
   }
-  let response;
-  for (;;) {
-    try { response = await openRouter(apiKey).chat.send({ chatRequest }, { retryCodes: ['5XX'] }); break; }
-    catch (error) {
-      const waitMs = rateLimitWaitMs(error);
-      if (waitMs === null) throw error;
-      onRateLimit?.(waitMs);
-      await sleep(waitMs);
-    }
-  }
+  const response = await retryRateLimited(
+    () => openRouter(apiKey).chat.send({ chatRequest }, { retryCodes: ['5XX'] }),
+    onRateLimit
+  );
   const result = response as ChatResult;
   const content = result.choices?.[0]?.message?.content;
   return { content: typeof content === 'string' ? content : '', usage: result.usage ?? { cost: 0 } };
