@@ -98,6 +98,7 @@ async function main() {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const messages = new Set<number>();
+  const offline = new Set<number>();
   let buffer = '';
   let final: Json | undefined;
   let streamError = '';
@@ -111,8 +112,9 @@ async function main() {
       if (Number.isInteger(event.participant)) messages.add(event.participant);
       console.log(`${event.screen_name ?? `Agent ${event.participant + 1}`}: ${event.message}`);
     } else if (event.type === 'error') {
-      if (event.recovered) {
-        console.warn(`RECOVERED: ${event.error ?? 'Agent failed'}; replaced ${event.model} with ${event.replacement_model}`);
+      if (event.recovered || event.offline) {
+        if (event.offline && Number.isInteger(event.participant)) offline.add(event.participant);
+        console.warn(`${event.recovered ? 'RECOVERED' : 'OFFLINE'}: ${event.error ?? 'Agent failed'}${event.replacement_model ? `; replaced ${event.model} with ${event.replacement_model}` : ''}`);
       } else {
         streamError = event.error ?? 'Unknown room error';
         console.error(`ERROR: ${streamError}`);
@@ -139,7 +141,7 @@ async function main() {
 
   if (streamError) throw new Error(streamError);
   if (!final || final.status === 'INVALID_RUN') throw new Error('The room ended without a valid outcome.');
-  if (messages.size !== models.length) throw new Error(`Only ${messages.size} of ${models.length} agents replied.`);
+  if (messages.size < 2 || messages.size + offline.size !== models.length) throw new Error(`Only ${messages.size} of ${models.length} agents replied.`);
 
   console.log(`\nPASS — ${final.calls ?? '?'} AI requests, $${Number(final.cost ?? 0).toFixed(4)}, ${rateLimits} rate-limit retries, ${Math.round((Date.now() - startedAt) / 1000)}s`);
 }

@@ -19,6 +19,11 @@ test('validates and applies Luna decisions, registering proposals before support
   expect(() => validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(0, 'undecided')] }, 2, registered)).toThrow(/Luna could not read the room/);
 });
 
+test('fills omitted offline Luna decisions as undecided', () => {
+  expect(validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(1, 'support', proposal)] }, 3, registered, new Set([2]))).toEqual([decision(0, 'support', proposal), decision(1, 'support', proposal), decision(2, 'undecided')]);
+  expect(() => validateInterpretation({ decisions: [decision(0, 'undecided')] }, 3, registered, new Set([2]))).toThrow(/room state was incomplete/);
+});
+
 test('normalizes inconsistent interpreter decisions without creating consensus', () => {
   const decisions = validateInterpretation({ decisions: [decision(0, 'undecided', 'should be discarded'), decision(1, 'propose')] }, 2, registered);
   expect(decisions).toEqual([decision(0, 'undecided'), decision(1, 'undecided')]);

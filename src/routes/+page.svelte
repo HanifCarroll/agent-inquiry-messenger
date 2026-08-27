@@ -60,6 +60,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   let messages = $derived(events.filter((event) => event.type === 'message'));
   let modelMessages = $derived(messages.filter((event) => event.participant !== 'human'));
   let interpretationEvents = $derived(events.filter((event) => event.type === 'interpretation'));
+  let offlineParticipants = $derived(new Set(events.filter((event) => event.type === 'error' && event.offline).map((event) => event.participant)));
   let activities = $derived.by(() => {
     if (!running) return [];
     const current: Record<string, Event> = {};
@@ -170,7 +171,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     const shouldFollow = followLatest;
     events = [...events, event];
     if (event.type === 'saved') saved = event.filename;
-    if (event.type === 'error' && !event.recovered) error = event.error ?? 'The room stopped unexpectedly. Start a new chat to try again.';
+    if (event.type === 'error' && !event.recovered && !event.offline) error = event.error ?? 'The room stopped unexpectedly. Start a new chat to try again.';
     await tick();
     if (shouldFollow && transcriptElement) transcriptElement.scrollTop = transcriptElement.scrollHeight;
   }
@@ -385,7 +386,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <div class="participant-list">
             {#each selected as seat, index (seat.id)}
               {@const activity = activities.find((item) => item.participant === index)}
-              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-personality">{personalityFor(seat.personalityId).label}</small><small class="participant-model" title={activity?.model_name ?? participantModel(index)}>{activity?.model_name ?? participantModel(index)}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
+              <div class="participant" class:working={Boolean(activity)} class:offline={!running || offlineParticipants.has(index)}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-personality">{personalityFor(seat.personalityId).label}</small><small class="participant-model" title={activity?.model_name ?? participantModel(index)}>{activity?.model_name ?? participantModel(index)}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : !running || offlineParticipants.has(index) ? 'offline' : 'online'}</small></span></div>
             {/each}
             <div class="participant you" class:offline={!running}><span class="status-dot">●</span><span><b>You</b><small>{running ? 'online' : 'offline'}</small></span></div>
           </div>
