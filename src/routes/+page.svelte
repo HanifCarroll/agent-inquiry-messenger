@@ -114,11 +114,11 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     const next = selected.slice(0, count);
     const names = new Set(next.map((seat) => seat.alias));
     const personalities = new Set(next.map((seat) => seat.personalityId));
-    while (next.length < count && models[next.length]) {
+    while (next.length < count && models.length) {
       const alias = screenNames(100).find((name) => !names.has(name));
       const personalityId = nextPersonality(personalities);
       if (!alias || !personalityId) break;
-      next.push({ id: crypto.randomUUID(), modelId: models[next.length].id, alias, personalityId });
+      next.push({ id: crypto.randomUUID(), modelId: models[next.length % models.length].id, alias, personalityId });
       names.add(alias);
       personalities.add(personalityId);
     }
