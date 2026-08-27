@@ -75,9 +75,12 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     return Object.values(current);
   });
   let cost = $derived(final?.cost ?? [...modelMessages, ...interpretationEvents].reduce((sum, event) => sum + Number(event.usage?.cost ?? 0), 0));
-  let maxCalls = $derived((participantCount + 1) * (1 + debateTurns + (mode === 'vote' ? 1 : 0)));
+  let roomParticipantCount = $derived(connected ? participantCount : 3);
+  let roomDebateTurns = $derived(connected ? debateTurns : 8);
+  let roomResearch = $derived(connected && research);
+  let maxCalls = $derived((roomParticipantCount + 1) * (1 + roomDebateTurns + (mode === 'vote' ? 1 : 0)));
   let calls = $derived(final?.calls ?? modelMessages.length + interpretationEvents.length);
-  let ready = $derived(Boolean(question.trim()) && selected.length === participantCount && selectedModels.length === participantCount);
+  let ready = $derived(Boolean(question.trim()) && selected.length === roomParticipantCount && selectedModels.length === roomParticipantCount);
   let lastMessage = $derived(messages.at(-1));
 
   async function loadModels() {
@@ -87,7 +90,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       models = data.models;
-      if (!selected.length) fillRoster(participantCount);
+      if (!selected.length) fillRoster(roomParticipantCount);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not load the OpenRouter agent list. Try refreshing the window.';
     }
@@ -191,7 +194,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(connectedKey() ? { 'x-openrouter-key': connectedKey() } : {}) },
-        body: JSON.stringify({ question, models: selected.map((seat) => seat.modelId), screenNames: participantNames, personalityIds: selected.map((seat) => seat.personalityId), participantCount, debateTurns, research, mode })
+        body: JSON.stringify({ question, models: selected.map((seat) => seat.modelId), screenNames: participantNames, personalityIds: selected.map((seat) => seat.personalityId), participantCount: roomParticipantCount, debateTurns: roomDebateTurns, research: roomResearch, mode })
       });
       if (!response.ok) {
         const data = await response.json();
@@ -284,7 +287,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <p class="kicker">Welcome</p>
           <h1 id="setup-title">Start a group chat</h1>
           <p>Ask one question, invite a few AI agents, and watch them talk it through.</p>
-          <p class="auth-copy">{connected ? 'OpenRouter connected — your key stays in this browser session.' : 'Guest access includes free agents. Connect OpenRouter to unlock the full model catalog and use your own credits.'}</p>
+          <p class="auth-copy">{connected ? 'OpenRouter connected — your key stays in this browser session.' : 'Guest access runs a fixed hosted DeepSeek room. Connect OpenRouter to choose models and use your own credits.'}</p>
           {#if connected}<button type="button" class="auth-button" onclick={() => { disconnectOpenRouter(); connected = false; selected = []; loadModels(); }}>Use guest access</button>{:else}<button type="button" class="auth-button" onclick={connect} disabled={connecting}>{connecting ? 'Connecting…' : 'Connect OpenRouter'}</button>{/if}
         </div>
       </div>
@@ -323,24 +326,30 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
                 <label class:active={mode === 'consensus'}><input type="radio" name="mode" value="consensus" bind:group={mode} /><span><b>Reach an agreement</b><small>Stop when every agent lands on the same answer</small></span></label>
                 <label class:active={mode === 'vote'}><input type="radio" name="mode" value="vote" bind:group={mode} /><span><b>Take a vote</b><small>Finish the chat, then choose the answer with the most votes</small></span></label>
               </fieldset>
-              <fieldset>
-                <legend>Number of agents</legend>
-                <div class="count-picker">
-                  {#each [2, 3, 4, 5] as count (count)}
-                    <button type="button" class:active={participantCount === count} aria-pressed={participantCount === count} onclick={() => setParticipantCount(count)}>{count}</button>
-                  {/each}
-                </div>
-              </fieldset>
-              <label class="turn-field" for="turns"><span>Rounds after opening</span><input id="turns" type="number" min="1" max="12" value={debateTurns} oninput={(event) => setDebateTurns(Number(event.currentTarget.value))} /><small>Up to {maxCalls} AI requests</small></label>
+              {#if connected}
+                <fieldset>
+                  <legend>Number of agents</legend>
+                  <div class="count-picker">
+                    {#each [2, 3, 4, 5] as count (count)}
+                      <button type="button" class:active={participantCount === count} aria-pressed={participantCount === count} onclick={() => setParticipantCount(count)}>{count}</button>
+                    {/each}
+                  </div>
+                </fieldset>
+                <label class="turn-field" for="turns"><span>Rounds after opening</span><input id="turns" type="number" min="1" max="12" value={debateTurns} oninput={(event) => setDebateTurns(Number(event.currentTarget.value))} /><small>Up to {maxCalls} AI requests</small></label>
+              {:else}
+                <p class="auth-copy">Hosted guest room: 3 DeepSeek agents, 8 rounds after opening, web search off.</p>
+              {/if}
             </div>
 
-            <button type="button" class="research-toggle" class:enabled={research} aria-pressed={research} onclick={() => research = !research}>
-              <span class="checkbox" aria-hidden="true">{research ? '✓' : ''}</span>
-              <span><b>Let agents search the web</b><small>{research ? 'On — agents can use current sources' : 'Off — agents answer from what they know'}</small></span>
-            </button>
+            {#if connected}
+              <button type="button" class="research-toggle" class:enabled={research} aria-pressed={research} onclick={() => research = !research}>
+                <span class="checkbox" aria-hidden="true">{research ? '✓' : ''}</span>
+                <span><b>Let agents search the web</b><small>{research ? 'On — agents can use current sources' : 'Off — agents answer from what they know'}</small></span>
+              </button>
+            {/if}
 
             <section class="directory" aria-labelledby="directory-title">
-              <div class="pane-heading"><h2 id="directory-title">Choose agents</h2><span>{connected ? `${roster.length} available` : `${roster.length} free available`}</span></div>
+              <div class="pane-heading"><h2 id="directory-title">Choose agents</h2><span>{connected ? `${roster.length} available` : 'Fixed hosted DeepSeek room'}</span></div>
               <div class="directory-tools">
                 <label class="search-field" for="search"><span>Find an agent</span><input id="search" bind:value={search} type="search" placeholder="Search models or providers…" /></label>
                 <label class="sort-field" for="sort"><span>Sort by</span><select id="sort" bind:value={sort}><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="price-asc">Price low–high</option><option value="price-desc">Price high–low</option></select></label>
@@ -350,11 +359,11 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
                 {#if models.length && !roster.length}<div class="directory-state">No agents match “{search}”.</div>{/if}
                 {#each roster as model (model.id)}
                   {@const selectedCount = selected.filter((seat) => seat.modelId === model.id).length}
-                  <button type="button" class="buddy-row" class:selected={selectedCount > 0} disabled={selected.length >= participantCount} onclick={() => add(model.id)} aria-label={selectedCount ? `Add another ${model.name}` : `Add ${model.name}`}>
+                  <button type="button" class="buddy-row" class:selected={selectedCount > 0} disabled={selected.length >= roomParticipantCount} onclick={() => add(model.id)} aria-label={selectedCount ? `Add another ${model.name}` : `Add ${model.name}`}>
                     <span class="status-dot">●</span>
                     <span class="model-copy"><b>{model.name}</b><small>{model.id}</small></span>
-                    <span class="pricing"><span>read {money(model.pricing.input)}</span><span>reply {money(model.pricing.output)}</span></span>
-                    <span class="invite-state">{selectedCount ? selected.length < participantCount ? `Add another (${selectedCount})` : `${selectedCount} added` : 'Add'}</span>
+                    <span class="pricing">{#if connected}<span>read {money(model.pricing.input)}</span><span>reply {money(model.pricing.output)}</span>{:else}<span>hosted</span><span>DeepSeek</span>{/if}</span>
+                    <span class="invite-state">{selectedCount ? selected.length < roomParticipantCount ? `Add another (${selectedCount})` : `${selectedCount} added` : 'Add'}</span>
                   </button>
                 {/each}
               </div>
@@ -364,7 +373,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
       </div>
 
       <footer class="setup-footer">
-        <div class="footer-status"><span class:online={ready} class="footer-dot">●</span><span>{ready ? `${participantCount} agents ready · ${mode === 'vote' ? 'Take a vote' : 'Reach an agreement'} · Web search ${research ? 'on' : 'off'} · Up to ${maxCalls} AI requests` : selected.length < participantCount ? `Invite ${participantCount - selected.length} more ${participantCount - selected.length === 1 ? 'agent' : 'agents'}` : 'Enter a question to continue'}</span></div>
+        <div class="footer-status"><span class:online={ready} class="footer-dot">●</span><span>{ready ? `${roomParticipantCount} agents ready · ${mode === 'vote' ? 'Take a vote' : 'Reach an agreement'} · Web search ${roomResearch ? 'on' : 'off'} · Up to ${maxCalls} AI requests` : selected.length < roomParticipantCount ? `Invite ${roomParticipantCount - selected.length} more ${roomParticipantCount - selected.length === 1 ? 'agent' : 'agents'}` : 'Enter a question to continue'}</span></div>
         <button class="primary-button" disabled={!ready || running} onclick={start}>{running ? 'Signing on…' : 'Start room'}</button>
       </footer>
     </section>

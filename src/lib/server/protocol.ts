@@ -6,16 +6,15 @@ export type Model = SDKModel;
 export type DecisionMode = 'consensus' | 'vote';
 export type Decision = { participant: number; type: 'propose' | 'support' | 'undecided'; proposal: string };
 export type ChatEvent = Record<string, any>;
-export const INTERPRETER_MODEL = 'openai/gpt-5.6-luna';
+export const INTERPRETER_MODEL = 'z-ai/glm-5.3-flash';
+export const HOSTED_MODEL_ID = 'deepseek/deepseek-v4-flash';
+export const HOSTED_PARTICIPANT_COUNT = 3;
+export const HOSTED_DEBATE_TURNS = 8;
 export const USER_KEY_HEADER = 'x-openrouter-key';
-export const GUEST_MODEL_PATTERN = /:free$/;
-export const GUEST_CHAT_PREFERRED_MODELS = ['dots-studio/dots-3-note-preview:free', 'z-ai/glm-5.2:free', 'minimax/minimax-m3:free', 'google/gemma-4-26b-a4b-it:free'];
-const GUEST_CHAT_EXCLUDED_MODELS = new Set(['thinkingmachines/inkling-small:free', 'thinkingmachines/inkling:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3.5-lightning:free']);
-export function guestChatCapable(model: Pick<Model, 'id'>) { return !GUEST_CHAT_EXCLUDED_MODELS.has(model.id); }
-export function orderGuestChatModels<T extends Pick<Model, 'id'>>(models: T[]): T[] { return models.toSorted((a, b) => { const aRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(a.id); const bRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(b.id); return (aRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : aRank) - (bRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : bRank); }); }
 
-export function isGuestModel(id: string) { return GUEST_MODEL_PATTERN.test(id); }
-export function selectedModelsAllowed(ids: string[], guest: boolean) { return !guest || ids.every(isGuestModel); }
+export function selectedModelsAllowed(ids: string[], guest: boolean) {
+  return !guest || (ids.length === HOSTED_PARTICIPANT_COUNT && ids.every(id => id === HOSTED_MODEL_ID));
+}
 export function requestApiKey(userKey: string | null | undefined, env?: Record<string, string | undefined>) { return { apiKey: userKey?.trim() || key(env), guest: !userKey?.trim() }; }
 export function runKeyRouting(participantApiKey: string, interpreterApiKey: string) { return { participant: participantApiKey, interpreter: interpreterApiKey }; }
 
@@ -87,7 +86,7 @@ export function responseDelayMs(message: string, random = Math.random()): number
 }
 
 export class InterpreterError extends Error {
-  constructor(message: string, public usage: Record<string, any> = { cost: 0 }) { super(`Luna could not read the room: ${message}`); }
+  constructor(message: string, public usage: Record<string, any> = { cost: 0 }) { super(`The room referee could not read the room: ${message}`); }
 }
 
 function openRouter(apiKey: string) {
@@ -103,7 +102,7 @@ const interpreterSchema = {
   }, required: ['participant', 'type', 'proposal'] } } },
   required: ['decisions']
 };
-const LUNA_SYSTEM = `You are Luna, a neutral transcript clerk. Read the ordinary group chat and report each participant's latest main position. Never assess answer quality, choose an answer, or count the human. Resolve conversational references such as "that one," "you sold me," or "still going with mine" only when the transcript makes the referent clear; otherwise mark the participant undecided. A caveat or exception does not replace someone's main position unless they actually switch their answer. For support, return the exact matching registered proposal text. For propose, extract a concise complete answer actually advanced by that participant. Return an object with a decisions array containing exactly one decision for every online participant; offline participants may be omitted.`;
+const INTERPRETER_SYSTEM = `You are the room referee, a neutral transcript clerk. Read the ordinary group chat and report each participant's latest main position. Never assess answer quality, choose an answer, or count the human. Resolve conversational references such as "that one," "you sold me," or "still going with mine" only when the transcript makes the referent clear; otherwise mark the participant undecided. A caveat or exception does not replace someone's main position unless they actually switch their answer. For support, return the exact matching registered proposal text. For propose, extract a concise complete answer actually advanced by that participant. Return an object with a decisions array containing exactly one decision for every online participant; offline participants may be omitted.`;
 
 export function participantReasoning(model: Pick<Model, 'reasoning'>): ChatRequestEffort {
   if (!model.reasoning?.mandatory) return 'none';
@@ -114,7 +113,7 @@ async function request(apiKey: string, model: string, messages: ChatRequest['mes
   const chatRequest: any = { model, messages, maxTokens: structured ? 1200 : 100, stream: false, ...(plugin ? { plugins: [{ id: 'web', engine: 'exa', maxResults: 5 }] } : {}) };
   if (!structured) chatRequest.reasoning = { effort: reasoning };
   if (structured) {
-    chatRequest.responseFormat = { type: 'json_schema', jsonSchema: { name: 'luna_decisions', strict: true, schema: interpreterSchema } };
+    chatRequest.responseFormat = { type: 'json_schema', jsonSchema: { name: 'room_decisions', strict: true, schema: interpreterSchema } };
     chatRequest.provider = { requireParameters: true };
   }
   const response = await retryRateLimited(
@@ -181,7 +180,7 @@ export async function askParticipant(apiKey: string, model: Model, screenName: s
 export async function interpret(apiKey: string, question: string, participantCount: number, registered: Map<string, string>, transcriptMessages: ChatEvent[], names: string[], onRateLimit?: (waitMs: number) => void, offlineParticipants = new Set<number>()) {
   const proposals = formatProposalList([...registered.values()]);
   const transcript = transcriptMessages.map(message => `${message.participant === 'human' ? 'Human (not a participant)' : `Participant ${message.participant} (${names[message.participant]})`}: ${message.message}`).join('\n');
-  const result = await request(apiKey, INTERPRETER_MODEL, [{ role: 'system', content: LUNA_SYSTEM }, { role: 'user', content: `Question:\n${question}\n\nOffline participant IDs (do not invent positions for them): ${[...offlineParticipants].join(', ') || '(none)'}\n\nRegistered proposals (exact text):\n${proposals}\n\nFull chat in chronological order:\n${transcript}\n\nReport every online participant's latest current position now; offline participants may be omitted.` }], false, true, 'none', onRateLimit);
+  const result = await request(apiKey, INTERPRETER_MODEL, [{ role: 'system', content: INTERPRETER_SYSTEM }, { role: 'user', content: `Question:\n${question}\n\nOffline participant IDs (do not invent positions for them): ${[...offlineParticipants].join(', ') || '(none)'}\n\nRegistered proposals (exact text):\n${proposals}\n\nFull chat in chronological order:\n${transcript}\n\nReport every online participant's latest current position now; offline participants may be omitted.` }], false, true, 'none', onRateLimit);
   let parsed: unknown;
   try { parsed = parseJson(result.content); } catch { throw new InterpreterError('the latest positions were unclear', result.usage); }
   try { return { decisions: applyInterpretation(parsed, participantCount, registered, offlineParticipants), usage: result.usage }; } catch (error) { if (error instanceof InterpreterError) error.usage = result.usage; throw error; }
@@ -192,16 +191,18 @@ export function chatCapable(model: Pick<Model, 'architecture'>) {
   const output = model.architecture?.outputModalities ?? [];
   return input.includes('text') && output.length === 1 && output[0] === 'text';
 }
-export async function catalog(apiKey = key(), guest = false): Promise<Model[]> { const pages = await openRouter(apiKey).models.list(); const models: Model[] = []; for await (const page of pages) models.push(...page.result.data); const filtered = models.filter(model => chatCapable(model) && !model.id.endsWith(':batch') && (!guest || (isGuestModel(model.id) && guestChatCapable(model)))); return guest ? orderGuestChatModels(filtered) : filtered; }
+export async function catalog(apiKey = key(), guest = false): Promise<Model[]> { const pages = await openRouter(apiKey).models.list(); const models: Model[] = []; for await (const page of pages) models.push(...page.result.data); return models.filter(model => chatCapable(model) && !model.id.endsWith(':batch') && (!guest || model.id === HOSTED_MODEL_ID)); }
 export function price(model: Model) { const perMillion = (value: string) => { const amount = Number(value) * 1_000_000; return Number.isFinite(amount) && amount >= 0 ? amount : null; }; return { input: perMillion(model.pricing.prompt), output: perMillion(model.pricing.completion) }; }
 
-export function latestSupportUnanimous(decisions: Decision[] | ChatEvent[], participantCount: number): string | null {
+export function latestSupportUnanimous(decisions: Decision[] | ChatEvent[], participantCount: number, offlineParticipants = new Set<number>()): string | null {
   const latest: any[] = Array.from({ length: participantCount });
   for (const item of decisions) if (Number.isInteger(item.participant) && item.participant >= 0 && item.participant < participantCount) latest[item.participant] = item;
-  if (latest.some(item => item?.type !== 'support')) return null;
-  const proposals = latest.map(item => item.proposal);
-  return proposals.every(proposal => proposal === proposals[0]) ? proposals[0] : null;
+  const online = Array.from({ length: participantCount }, (_, participant) => participant).filter(participant => !offlineParticipants.has(participant));
+  if (online.some(participant => latest[participant]?.type !== 'support')) return null;
+  const proposals = online.map(participant => latest[participant].proposal);
+  return proposals.length > 0 && proposals.every(proposal => proposal === proposals[0]) ? proposals[0] : null;
 }
+export function canReachConsensus(mode: DecisionMode, completedRounds: number, decisions: Decision[], participantCount: number, offlineParticipants = new Set<number>()) { return mode === 'consensus' && completedRounds >= 4 ? latestSupportUnanimous(decisions, participantCount, offlineParticipants) : null; }
 export function voteWinner(decisions: Decision[], registered: Set<string>): { proposal: string; count: number } | null {
   const counts = new Map<string, number>();
   for (const decision of decisions) if (decision.type === 'support' && registered.has(proposalId(decision.proposal))) counts.set(decision.proposal, (counts.get(decision.proposal) ?? 0) + 1);
@@ -226,8 +227,8 @@ export async function run(participantApiKey: string, interpreterApiKey: string, 
   const waitMessage = (waitMs: number) => `got rate-limited — retrying in ${Math.ceil(waitMs / 1000)}s…`;
   const pace = async (startedAt: number, message: string) => { const remaining = responseDelayMs(message) - (Date.now() - startedAt); if (remaining > 0) await sleep(remaining); };
   const consume = async (model: Model, participant: number, prompt: string, useResearch = false, failOnRateLimit = false) => { calls++; const result = await participantReply(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => { emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, model_name: model.name, screen_name: names[participant], message: waitMessage(waitMs) }); if (failOnRateLimit) throw new Error(`${model.name} was rate-limited`); }); cost += Number(result.usage?.cost ?? 0); return result; };
-  const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room', message: waitMessage(waitMs) }), inactive); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } finally { emit({ type: 'activity', status: 'done', phase, rotation, participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Luna', message: '' }); } };
-  const finish = (final: ChatEvent) => { final.outcome = outcomeText(final, models.length); final.observer = 'Luna'; emit(final); return { events: [...messages, final], final }; };
+  const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Room referee', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room referee', message: waitMessage(waitMs) }), inactive); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Room referee', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } finally { emit({ type: 'activity', status: 'done', phase, rotation, participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room referee', message: '' }); } };
+  const finish = (final: ChatEvent) => { final.outcome = outcomeText(final, models.length); final.observer = 'Room referee'; emit(final); return { events: [...messages, final], final }; };
   const transcript = () => messages.map(m => `${m.participant === 'human' ? 'You' : names[m.participant]}: ${m.message}`).join('\n');
   const inactive = new Set<number>(); const seatModels = [...models]; let replacementIndex = 0;
   const reply = async (phase: string, rotation: number, participant: number, prompt: string, useResearch = false) => {
@@ -269,8 +270,7 @@ export async function run(participantApiKey: string, interpreterApiKey: string, 
       if (result) addMessage('opening', 0, participant, result);
     }
     if (activeCount() < 2) return finish({ type: 'final', status: 'NO_CONSENSUS', mode, cost, calls });
-    const openingDecisions = await addInterpretation('opening', 0);
-    if (mode === 'consensus') { const proposal = latestSupportUnanimous(openingDecisions, models.length); if (proposal) return finish({ type: 'final', status: 'CONSENSUS', mode, proposal, cost, calls }); }
+    await addInterpretation('opening', 0);
     for (let rotation = 1; rotation <= debateTurns; rotation++) {
       for (let participant = 0; participant < models.length; participant++) {
         if (inactive.has(participant)) continue;
@@ -278,7 +278,7 @@ export async function run(participantApiKey: string, interpreterApiKey: string, 
         if (result) addMessage('chat', rotation, participant, result);
       }
       if (activeCount() < 2) return finish({ type: 'final', status: 'NO_CONSENSUS', mode, cost, calls });
-      const decisions = await addInterpretation('chat', rotation); if (mode === 'consensus') { const proposal = latestSupportUnanimous(decisions, models.length); if (proposal) return finish({ type: 'final', status: 'CONSENSUS', mode, proposal, cost, calls }); }
+      const decisions = await addInterpretation('chat', rotation); const proposal = canReachConsensus(mode, rotation, decisions, models.length, inactive); if (proposal) return finish({ type: 'final', status: 'CONSENSUS', mode, proposal, cost, calls });
     }
     if (mode === 'vote') {
       const proposalList = formatProposalList(registered.values());

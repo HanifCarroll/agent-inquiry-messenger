@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_CHAT_PREFERRED_MODELS, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, guestChatCapable, isGuestModel, latestSupportUnanimous, orderGuestChatModels, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, canReachConsensus, chatCapable, debatePrompt, formatProposalList, HOSTED_DEBATE_TURNS, HOSTED_MODEL_ID, HOSTED_PARTICIPANT_COUNT, INTERPRETER_MODEL, InterpreterError, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
 import { CHAT_VOICES, SCREEN_NAME_POOL, personalityIds, validPersonalityIds, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
@@ -12,14 +12,14 @@ const registered = new Map([[proposalId(proposal), proposal]]);
 
 const decision = (participant: number, type: 'propose' | 'support' | 'undecided', text = '') => ({ participant, type, proposal: text });
 
-test('validates and applies Luna decisions, registering proposals before supports', () => {
+test('validates and applies room-referee decisions, registering proposals before supports', () => {
   const next = 'The room should publish both a summary and its sources.';
   expect(applyInterpretation({ decisions: [decision(0, 'propose', next), decision(1, 'support', next)] }, 2, new Map())).toEqual([decision(0, 'propose', next), decision(1, 'support', next)]);
   expect(validateInterpretation({ decisions: [decision(0, 'support', 'Not registered'), decision(1, 'undecided')] }, 2, registered)).toEqual([decision(0, 'undecided'), decision(1, 'undecided')]);
-  expect(() => validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(0, 'undecided')] }, 2, registered)).toThrow(/Luna could not read the room/);
+  expect(() => validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(0, 'undecided')] }, 2, registered)).toThrow(/room referee could not read the room/);
 });
 
-test('fills omitted offline Luna decisions as undecided', () => {
+test('fills omitted offline room-referee decisions as undecided', () => {
   expect(validateInterpretation({ decisions: [decision(0, 'support', proposal), decision(1, 'support', proposal)] }, 3, registered, new Set([2]))).toEqual([decision(0, 'support', proposal), decision(1, 'support', proposal), decision(2, 'undecided')]);
   expect(() => validateInterpretation({ decisions: [decision(0, 'undecided')] }, 3, registered, new Set([2]))).toThrow(/room state was incomplete/);
 });
@@ -106,21 +106,26 @@ test('states the final outcome concisely', () => {
   expect(outcomeText({ status: 'TIE' }, 3)).toBe('the vote ended in a tie.');
 });
 
-test('orders guest chat models by preference and excludes agentic-only Inkling Small', () => {
-  expect(guestChatCapable({ id: 'thinkingmachines/inkling-small:free' })).toBe(false);
-  expect(orderGuestChatModels([{ id: 'other:free' }, { id: GUEST_CHAT_PREFERRED_MODELS[0] }, { id: GUEST_CHAT_PREFERRED_MODELS[2] }]).map(model => model.id)).toEqual([GUEST_CHAT_PREFERRED_MODELS[0], GUEST_CHAT_PREFERRED_MODELS[2], 'other:free']);
-});
-
-test('enforces guest models while leaving Luna on the server key', () => {
-  expect(GUEST_MODEL_PATTERN.test('openai/gpt-oss-20b:free')).toBe(true);
-  expect(isGuestModel('openai/gpt-5.6-luna')).toBe(false);
-  expect(selectedModelsAllowed(['openai/gpt-oss-20b:free'], true)).toBe(true);
+test('enforces the fixed hosted DeepSeek guest room while preserving connected choices', () => {
+  expect(HOSTED_MODEL_ID).toBe('deepseek/deepseek-v4-flash');
+  expect(HOSTED_PARTICIPANT_COUNT).toBe(3);
+  expect(HOSTED_DEBATE_TURNS).toBe(8);
+  expect(selectedModelsAllowed(Array(3).fill(HOSTED_MODEL_ID), true)).toBe(true);
+  expect(selectedModelsAllowed([HOSTED_MODEL_ID], true)).toBe(false);
   expect(selectedModelsAllowed(['openai/gpt-5.6-luna'], true)).toBe(false);
   expect(selectedModelsAllowed(['openai/gpt-5.6-luna'], false)).toBe(true);
-  expect(INTERPRETER_MODEL).toBe('openai/gpt-5.6-luna');
+  expect(INTERPRETER_MODEL).toBe('z-ai/glm-5.3-flash');
+  expect(new InterpreterError('unclear').message).toContain('room referee');
   expect(requestApiKey('sk-or-user', { OPENROUTER_API_KEY: 'sk-or-server' })).toEqual({ apiKey: 'sk-or-user', guest: false });
   expect(requestApiKey(null, { OPENROUTER_API_KEY: 'sk-or-server' })).toEqual({ apiKey: 'sk-or-server', guest: true });
   expect(runKeyRouting('sk-or-user', 'sk-or-server')).toEqual({ participant: 'sk-or-user', interpreter: 'sk-or-server' });
+});
+
+test('allows unanimity only after four completed debate rounds and never in vote mode', () => {
+  const unanimous = [decision(0, 'support', proposal), decision(1, 'support', proposal)];
+  expect(canReachConsensus('consensus', 3, unanimous, 2)).toBeNull();
+  expect(canReachConsensus('consensus', 4, unanimous, 2)).toBe(proposal);
+  expect(canReachConsensus('vote', 12, unanimous, 2)).toBeNull();
 });
 
 test('accepts text-only chat models, including text-only GPT-OSS, and rejects multimodal output', () => {

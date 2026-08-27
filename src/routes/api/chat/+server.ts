@@ -1,4 +1,4 @@
-import { catalog, key, requestApiKey, run, selectedModelsAllowed, USER_KEY_HEADER, type ChatEvent, type DecisionMode, type Model } from '$lib/server/protocol';
+import { catalog, HOSTED_DEBATE_TURNS, HOSTED_MODEL_ID, HOSTED_PARTICIPANT_COUNT, key, requestApiKey, run, selectedModelsAllowed, USER_KEY_HEADER, type ChatEvent, type DecisionMode, type Model } from '$lib/server/protocol';
 import { registerSession } from '$lib/server/sessions';
 import { saveRun } from '$lib/server/storage';
 import { validPersonalityIds, validScreenNames, type PersonalityId } from '$lib/identity';
@@ -13,12 +13,13 @@ export async function POST({ request, platform, getClientAddress }) {
   let body: { question?: string; models?: string[]; screenNames?: string[]; personalityIds?: PersonalityId[]; participantCount?: number; debateTurns?: number; research?: boolean; mode?: DecisionMode };
   try { body = await request.json(); } catch { return json({ error: 'The room setup could not be read. Try again.' }, { status: 400 }); }
   const question = body.question?.trim();
-  const ids = body.models ?? [];
+  const requestedIds = Array.isArray(body.models) ? body.models : [];
+  const ids = guest ? Array(HOSTED_PARTICIPANT_COUNT).fill(HOSTED_MODEL_ID) : requestedIds;
   const aliases = body.screenNames;
   const personalityIds = body.personalityIds;
-  const participantCount = body.participantCount ?? ids.length;
-  const debateTurns = body.debateTurns ?? 3;
-  const research = body.research ?? false;
+  const participantCount = guest ? HOSTED_PARTICIPANT_COUNT : body.participantCount ?? ids.length;
+  const debateTurns = guest ? HOSTED_DEBATE_TURNS : body.debateTurns ?? 3;
+  const research = guest ? false : body.research ?? false;
   const mode = body.mode ?? 'consensus';
   if (!Number.isInteger(participantCount) || participantCount < 2 || participantCount > 5) return json({ error: 'Choose 2 to 5 agents.' }, { status: 400 });
   if (!question || ids.length !== participantCount) return json({ error: `Choose ${participantCount} agents and enter a question.` }, { status: 400 });
@@ -28,7 +29,7 @@ export async function POST({ request, platform, getClientAddress }) {
   if (typeof research !== 'boolean') return json({ error: 'The web search setting was not recognized.' }, { status: 400 });
   if (mode !== 'consensus' && mode !== 'vote') return json({ error: 'Choose how the room should finish.' }, { status: 400 });
   try {
-    if (!selectedModelsAllowed(ids, guest)) return json({ error: 'Guests can only use free participant models. Connect OpenRouter to use paid models.' }, { status: 403 });
+    if (!selectedModelsAllowed(ids, guest)) return json({ error: 'The hosted room configuration is invalid.' }, { status: 403 });
     const available = await catalog(participantApiKey, guest);
     const availableById = new Map(available.map(model => [model.id, model]));
     const replacements = available.filter(model => !ids.includes(model.id));

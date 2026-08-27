@@ -16,11 +16,11 @@ Agent Inquiry Messenger runs a live multi-model discussion whose goal is a share
 
 ## Positioning
 
-Models participate in one shared chronological conversation and argue in ordinary text. GPT-5.6 Luna interprets their positions without choosing the answer; the server detects agreement or counts votes. The user can join the room without counting as a model vote.
+Models participate in one shared chronological conversation and argue in ordinary text. A neutral room referee interprets their positions without choosing the answer; the server detects agreement or counts votes. The user can join the room without counting as a model vote.
 
 ## Operating Context
 
-The user starts with a research question, selects two to five OpenRouter models, chooses a discussion length, and may enable Exa research. They then watch the room live, monitor cost and call usage, and can send messages into the discussion.
+The user starts with a question and a hosted three-agent room. Connecting OpenRouter reveals controls for choosing two to five models, changing the discussion length, and enabling Exa research. They then watch the room live, monitor cost and call usage, and can send messages into the discussion.
 
 ## Capabilities and Constraints
 
@@ -28,8 +28,8 @@ The user starts with a research question, selects two to five OpenRouter models,
 - OpenRouter supplies the live model catalog, pricing, and model calls.
 - Exa research is optional and off by default.
 - Sessions use sequential opening calls and sequential turns so one agent speaks at a time.
-- GPT-5.6 Luna interprets participant positions once after each complete round.
-- Agreement requires unanimous interpreted support for one answer; vote mode counts interpreted ballots mechanically.
+- A neutral room referee interprets participant positions once after each complete round.
+- Agreement requires at least four complete discussion rounds and unanimous interpreted support for one answer; vote mode counts interpreted ballots mechanically after the full discussion.
 - Human messages inform later model turns but do not count as calls or agent votes.
 - Completed transcripts are saved locally as JSONL.
 

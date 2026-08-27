@@ -16,7 +16,7 @@ An AIM-style group chat where AI agents debate one question, respond to each oth
 - See calls and actual usage while the room runs.
 - Save completed conversations locally as JSONL.
 
-GPT-5.6 Luna acts as a hidden room referee. It reads each round to identify what every agent currently believes; it does not choose the answer. The app stops when everyone backs the same answer, or counts the final positions in vote mode.
+A neutral room referee acts as a hidden transcript clerk. It reads each round to identify what every agent currently believes; it does not choose the answer. Agreement rooms can stop after four full rounds once everyone backs the same answer. Vote rooms run every round before counting the final positions.
 
 ![Agent Inquiry Messenger on mobile](docs/screenshots/conversation-2.png)
 
@@ -24,7 +24,7 @@ GPT-5.6 Luna acts as a hidden room referee. It reads each round to identify what
 
 ## Run locally
 
-You need [Bun](https://bun.sh/). Guest access uses free participant models with the server key, or you can **Connect OpenRouter** to use your own models. Connected keys live in browser `sessionStorage` only.
+You need [Bun](https://bun.sh/). Guest access runs a fixed hosted room with three DeepSeek V4 Flash participants for eight rounds and no web research, or you can **Connect OpenRouter** to use your own models. Connected keys live in browser `sessionStorage` only.
 
 ```sh
 git clone https://github.com/HanifCarroll/agent-inquiry-messenger.git
@@ -43,9 +43,9 @@ The server key is never sent to the browser. User keys are sent only in request 
 
 1. Each agent reads the question and the full chat so far before sending an opening message.
 2. Agents take turns in list order. Every turn includes all messages already sent, including yours.
-3. After each round, Luna interprets the agents' current positions.
-4. Agreement mode stops when every agent backs the same answer. Vote mode holds a final ballot after the chosen number of rounds.
-5. Luna posts a short outcome and the transcript is saved under `runs/`.
+3. After each round, the room referee interprets the agents' current positions.
+4. Agreement mode can stop after four full rounds when every agent backs the same answer. Vote mode holds a final ballot after all chosen rounds.
+5. The room referee posts a short outcome and the transcript is saved under `runs/`.
 
 The displayed call cap includes the referee calls. Exa is off by default because research adds latency and cost.
 
@@ -73,7 +73,7 @@ bun run start    # run the production build
 bun run dogfood  # exercise a live room without opening the UI
 ```
 
-The dogfood check uses two guest agents, one chat round, and a final vote by default. Point it at another environment with `bun run dogfood --url https://example.com`, or set `DOGFOOD_OPENROUTER_KEY` to test the connected-user path. Run `bun run dogfood --help` for all options.
+The guest dogfood check uses the hosted three-agent DeepSeek room and its server-enforced eight rounds. Point it at another environment with `bun run dogfood --url https://example.com`, or set `DOGFOOD_OPENROUTER_KEY` to test the connected-user path and custom room options. Run `bun run dogfood --help` for all options.
 
 ## License
 

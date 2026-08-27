@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { personalityIds as generatePersonalityIds, SCREEN_NAME_POOL } from '../src/lib/identity';
-import { GUEST_CHAT_PREFERRED_MODELS } from '../src/lib/server/protocol';
+import { HOSTED_MODEL_ID, HOSTED_PARTICIPANT_COUNT } from '../src/lib/server/protocol';
 
 type Json = Record<string, any>;
 
@@ -24,7 +24,7 @@ Options:
   --research         Enable web research
 
 Set DOGFOOD_OPENROUTER_KEY to test the connected-user path. Otherwise the
-script tests the guest path with the server's free models.`);
+script tests the fixed hosted DeepSeek guest room.`);
   process.exit(0);
 }
 
@@ -51,12 +51,7 @@ async function responseJson(response: Response): Promise<Json> {
 }
 
 function automaticModels(models: Json[], count = 2): string[] {
-  const free = models.filter(model => typeof model.id === 'string' && model.id.endsWith(':free'));
-  const candidates = free.length >= count ? free : models;
-  candidates.sort((a, b) => {
-    const aRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(a.id); const bRank = GUEST_CHAT_PREFERRED_MODELS.indexOf(b.id);
-    return (aRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : aRank) - (bRank < 0 ? GUEST_CHAT_PREFERRED_MODELS.length : bRank);
-  });
+  const candidates = [...models];
   const chosen: Json[] = [];
   const providers = new Set<string>();
   for (const model of candidates) {
@@ -76,7 +71,7 @@ async function main() {
   const startedAt = Date.now();
   const catalogResponse = await fetch(`${baseUrl}/api/models`, { headers });
   const catalog = await responseJson(catalogResponse);
-  const models = requestedModels.length ? requestedModels : automaticModels(catalog.models);
+  const models = apiKey ? (requestedModels.length ? requestedModels : automaticModels(catalog.models)) : Array(HOSTED_PARTICIPANT_COUNT).fill(HOSTED_MODEL_ID);
   const screenNames = SCREEN_NAME_POOL.slice(0, models.length);
   const personalityIds = generatePersonalityIds(models.length);
 
@@ -121,7 +116,7 @@ async function main() {
       }
     } else if (event.type === 'final') {
       final = event;
-      console.log(`\nLuna: ${event.outcome}`);
+      console.log(`\nRoom referee: ${event.outcome}`);
     }
   };
 
