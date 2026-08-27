@@ -8,18 +8,18 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { isNearBottom } from '$lib/chat-ui';
-  import { screenNames } from '$lib/identity';
+  import { CHAT_VOICES, personalityFor, personalityIds, screenNames, type PersonalityId } from '$lib/identity';
   import { connectOpenRouter, connectedKey, disconnectOpenRouter, finishOpenRouterConnection } from '$lib/openrouter-auth';
 
   type Model = { id: string; name: string; pricing: { input: number | null; output: number | null } };
   type Event = { type: string; [key: string]: any };
-  type Seat = { id: string; modelId: string; alias: string };
+  type Seat = { id: string; modelId: string; alias: string; personalityId: PersonalityId };
 
   let question = $state('');
   let models = $state.raw<Model[]>([]);
   let selected = $state<Seat[]>([]);
-  let participantCount = $state(2);
-  let debateTurns = $state(6);
+  let participantCount = $state(3);
+  let debateTurns = $state(3);
   let research = $state(false);
   let mode = $state<'consensus' | 'vote'>('consensus');
   let search = $state('');
@@ -73,7 +73,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   let cost = $derived(final?.cost ?? [...modelMessages, ...interpretationEvents].reduce((sum, event) => sum + Number(event.usage?.cost ?? 0), 0));
   let maxCalls = $derived((participantCount + 1) * (1 + debateTurns + (mode === 'vote' ? 1 : 0)));
   let calls = $derived(final?.calls ?? modelMessages.length + interpretationEvents.length);
-  let ready = $derived(Boolean(question.trim()) && selected.length === participantCount);
+  let ready = $derived(Boolean(question.trim()) && selected.length === participantCount && selectedModels.length === participantCount);
   let lastMessage = $derived(messages.at(-1));
 
   async function loadModels() {
@@ -83,6 +83,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       models = data.models;
+      if (!selected.length) fillRoster(participantCount);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not load the OpenRouter agent list. Try refreshing the window.';
     }
@@ -98,9 +99,28 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     try { await connectOpenRouter(); } finally { connecting = false; }
   }
 
+  function nextPersonality(used: Set<PersonalityId>) {
+    return personalityIds(CHAT_VOICES.length).find((id) => !used.has(id));
+  }
+
+  function fillRoster(count: number) {
+    const next = selected.slice(0, count);
+    const names = new Set(next.map((seat) => seat.alias));
+    const personalities = new Set(next.map((seat) => seat.personalityId));
+    while (next.length < count && models[next.length]) {
+      const alias = screenNames(100).find((name) => !names.has(name));
+      const personalityId = nextPersonality(personalities);
+      if (!alias || !personalityId) break;
+      next.push({ id: crypto.randomUUID(), modelId: models[next.length].id, alias, personalityId });
+      names.add(alias);
+      personalities.add(personalityId);
+    }
+    selected = next;
+  }
+
   function setParticipantCount(value: number) {
     participantCount = Math.max(2, Math.min(5, Math.round(value)));
-    selected = selected.slice(0, participantCount);
+    fillRoster(participantCount);
   }
 
   function setDebateTurns(value: number) {
@@ -109,18 +129,25 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
 
   function add(modelId: string) {
     if (selected.length >= participantCount) return;
-    const used = new Set(selected.map((seat) => seat.alias));
-    const alias = screenNames(100).find((name) => !used.has(name));
-    if (alias) selected = [...selected, { id: crypto.randomUUID(), modelId, alias }];
+    const usedNames = new Set(selected.map((seat) => seat.alias));
+    const alias = screenNames(100).find((name) => !usedNames.has(name));
+    const personalityId = nextPersonality(new Set(selected.map((seat) => seat.personalityId)));
+    if (alias && personalityId) selected = [...selected, { id: crypto.randomUUID(), modelId, alias, personalityId }];
   }
 
   function remove(id: string) {
     selected = selected.filter((seat) => seat.id !== id);
   }
 
-  function rerollAliases() {
-    const fresh = screenNames(selected.length);
-    selected = selected.map((seat, index) => ({ ...seat, alias: fresh[index] }));
+  function rerollPersonalities() {
+    const fresh = personalityIds(selected.length);
+    selected = selected.map((seat, index) => ({ ...seat, personalityId: fresh[index] }));
+  }
+
+  function rerollPersonality(id: string) {
+    const used = new Set(selected.map((seat) => seat.personalityId));
+    const personalityId = nextPersonality(used);
+    if (personalityId) selected = selected.map((seat) => seat.id === id ? { ...seat, personalityId } : seat);
   }
 
   function money(value: number | null) {
@@ -129,7 +156,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   }
 
   function participantName(participant: number) {
-    return run?.screen_names?.[participant] ?? participantNames[participant] ?? `Agent${participant + 1}`;
+    return (run?.screen_names?.[participant] ?? participantNames[participant] ?? `agent${participant + 1}`).toLowerCase();
   }
 
   async function handleEvent(event: Event) {
@@ -156,7 +183,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(connectedKey() ? { 'x-openrouter-key': connectedKey() } : {}) },
-        body: JSON.stringify({ question, models: selected.map((seat) => seat.modelId), screenNames: participantNames, participantCount, debateTurns, research, mode })
+        body: JSON.stringify({ question, models: selected.map((seat) => seat.modelId), screenNames: participantNames, personalityIds: selected.map((seat) => seat.personalityId), participantCount, debateTurns, research, mode })
       });
       if (!response.ok) {
         const data = await response.json();
@@ -210,7 +237,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   }
 
   function newChat() {
-    rerollAliases();
+    rerollPersonalities();
     events = [];
     saved = '';
     error = '';
@@ -261,64 +288,71 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <label class="field-label" for="question">Question for the room</label>
           <textarea id="question" bind:value={question} rows="4" placeholder="What’s the best harmless superpower for everyday life?"></textarea>
 
-          <div class="setup-controls">
-            <fieldset class="mode-picker">
-              <legend>How should the room finish?</legend>
-              <label class:active={mode === 'consensus'}><input type="radio" name="mode" value="consensus" bind:group={mode} /><span><b>Reach an agreement</b><small>Stop when every agent lands on the same answer</small></span></label>
-              <label class:active={mode === 'vote'}><input type="radio" name="mode" value="vote" bind:group={mode} /><span><b>Take a vote</b><small>Finish the chat, then choose the answer with the most votes</small></span></label>
-            </fieldset>
-            <fieldset>
-              <legend>Number of agents</legend>
-              <div class="count-picker">
-                {#each [2, 3, 4, 5] as count (count)}
-                  <button type="button" class:active={participantCount === count} aria-pressed={participantCount === count} onclick={() => setParticipantCount(count)}>{count}</button>
-                {/each}
-              </div>
-            </fieldset>
-            <label class="turn-field" for="turns"><span>Rounds after opening</span><input id="turns" type="number" min="1" max="12" value={debateTurns} oninput={(event) => setDebateTurns(Number(event.currentTarget.value))} /><small>Up to {maxCalls} AI requests</small></label>
-          </div>
-
-          <button type="button" class="research-toggle" class:enabled={research} aria-pressed={research} onclick={() => research = !research}>
-            <span class="checkbox" aria-hidden="true">{research ? '✓' : ''}</span>
-            <span><b>Let agents search the web</b><small>{research ? 'On — agents can use current sources' : 'Off — agents answer from what they know'}</small></span>
-          </button>
-
           <section class="selected-panel" aria-labelledby="selected-title" aria-live="polite">
             <div class="selected-heading"><h3 id="selected-title">Agents in this room</h3><span>{selected.length} of {participantCount}</span></div>
-            {#if selectedModels.length}
+            {#if selected.length}
               <div class="selected-list">
-                {#each selectedModels as model, index (selected[index].id)}
-                  <div class="selected-person"><span class="status-dot">●</span><b title={participantName(index)}>{participantName(index)}</b><span title={model.name}>{model.name}</span><button type="button" onclick={() => remove(selected[index].id)} aria-label={`Remove ${participantName(index)}`}>Remove</button></div>
+                {#each selected as seat, index (seat.id)}
+                  {@const model = models.find((item) => item.id === seat.modelId)}
+                  {@const personality = personalityFor(seat.personalityId)}
+                  <div class="selected-person"><span class="status-dot">●</span><b title={participantName(index)}>{participantName(index)}</b><span class="selected-personality" title={personality.label}>{personality.label}</span><span title={model?.name ?? seat.modelId}>{model?.name ?? 'loading…'}</span><span class="selected-actions"><button type="button" onclick={() => rerollPersonality(seat.id)} aria-label={`Re-roll ${participantName(index)}'s personality`}>Re-roll</button><button type="button" onclick={() => remove(seat.id)} aria-label={`Remove ${participantName(index)}`}>Remove</button></span></div>
                 {/each}
               </div>
             {:else}
-              <div class="empty-state"><span class="offline-dot">●</span><p>No agents here yet.<small>Choose {participantCount} from the list.</small></p></div>
+              <div class="empty-state"><span class="offline-dot">●</span><p>Assigning agents…<small>Loading the OpenRouter catalog.</small></p></div>
             {/if}
           </section>
 
           {#if error}<p class="alert" role="alert"><b>The room hit a snag.</b><span>{error}</span></p>{/if}
         </section>
 
-        <section class="directory" aria-labelledby="directory-title">
-          <div class="pane-heading"><h2 id="directory-title">Choose agents</h2><span>{connected ? `${roster.length} available` : `${roster.length} free available`}</span></div>
-          <div class="directory-tools">
-            <label class="search-field" for="search"><span>Find an agent</span><input id="search" bind:value={search} type="search" placeholder="Search models or providers…" /></label>
-            <label class="sort-field" for="sort"><span>Sort by</span><select id="sort" bind:value={sort}><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="price-asc">Price low–high</option><option value="price-desc">Price high–low</option></select></label>
+        <details class="room-settings">
+          <summary>Change room settings</summary>
+          <div class="room-settings-content">
+            <div class="setup-controls">
+              <fieldset class="mode-picker">
+                <legend>How should the room finish?</legend>
+                <label class:active={mode === 'consensus'}><input type="radio" name="mode" value="consensus" bind:group={mode} /><span><b>Reach an agreement</b><small>Stop when every agent lands on the same answer</small></span></label>
+                <label class:active={mode === 'vote'}><input type="radio" name="mode" value="vote" bind:group={mode} /><span><b>Take a vote</b><small>Finish the chat, then choose the answer with the most votes</small></span></label>
+              </fieldset>
+              <fieldset>
+                <legend>Number of agents</legend>
+                <div class="count-picker">
+                  {#each [2, 3, 4, 5] as count (count)}
+                    <button type="button" class:active={participantCount === count} aria-pressed={participantCount === count} onclick={() => setParticipantCount(count)}>{count}</button>
+                  {/each}
+                </div>
+              </fieldset>
+              <label class="turn-field" for="turns"><span>Rounds after opening</span><input id="turns" type="number" min="1" max="12" value={debateTurns} oninput={(event) => setDebateTurns(Number(event.currentTarget.value))} /><small>Up to {maxCalls} AI requests</small></label>
+            </div>
+
+            <button type="button" class="research-toggle" class:enabled={research} aria-pressed={research} onclick={() => research = !research}>
+              <span class="checkbox" aria-hidden="true">{research ? '✓' : ''}</span>
+              <span><b>Let agents search the web</b><small>{research ? 'On — agents can use current sources' : 'Off — agents answer from what they know'}</small></span>
+            </button>
+
+            <section class="directory" aria-labelledby="directory-title">
+              <div class="pane-heading"><h2 id="directory-title">Choose agents</h2><span>{connected ? `${roster.length} available` : `${roster.length} free available`}</span></div>
+              <div class="directory-tools">
+                <label class="search-field" for="search"><span>Find an agent</span><input id="search" bind:value={search} type="search" placeholder="Search models or providers…" /></label>
+                <label class="sort-field" for="sort"><span>Sort by</span><select id="sort" bind:value={sort}><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="price-asc">Price low–high</option><option value="price-desc">Price high–low</option></select></label>
+              </div>
+              <div class="roster" aria-label="OpenRouter agent list">
+                {#if !models.length}<div class="directory-state"><span class="status-dot">●</span>Connecting to OpenRouter…</div>{/if}
+                {#if models.length && !roster.length}<div class="directory-state">No agents match “{search}”.</div>{/if}
+                {#each roster as model (model.id)}
+                  {@const selectedCount = selected.filter((seat) => seat.modelId === model.id).length}
+                  <button type="button" class="buddy-row" class:selected={selectedCount > 0} disabled={selected.length >= participantCount} onclick={() => add(model.id)} aria-label={selectedCount ? `Add another ${model.name}` : `Add ${model.name}`}>
+                    <span class="status-dot">●</span>
+                    <span class="model-copy"><b>{model.name}</b><small>{model.id}</small></span>
+                    <span class="pricing"><span>read {money(model.pricing.input)}</span><span>reply {money(model.pricing.output)}</span></span>
+                    <span class="invite-state">{selectedCount ? selected.length < participantCount ? `Add another (${selectedCount})` : `${selectedCount} added` : 'Add'}</span>
+                  </button>
+                {/each}
+              </div>
+            </section>
           </div>
-          <div class="roster" aria-label="OpenRouter agent list">
-            {#if !models.length}<div class="directory-state"><span class="status-dot">●</span>Connecting to OpenRouter…</div>{/if}
-            {#if models.length && !roster.length}<div class="directory-state">No agents match “{search}”.</div>{/if}
-            {#each roster as model (model.id)}
-              {@const selectedCount = selected.filter((seat) => seat.modelId === model.id).length}
-              <button type="button" class="buddy-row" class:selected={selectedCount > 0} disabled={selected.length >= participantCount} onclick={() => add(model.id)} aria-label={selectedCount ? `Add another ${model.name}` : `Add ${model.name}`}>
-                <span class="status-dot">●</span>
-                <span class="model-copy"><b>{model.name}</b><small>{model.id}</small></span>
-                <span class="pricing"><span>read {money(model.pricing.input)}</span><span>reply {money(model.pricing.output)}</span></span>
-                <span class="invite-state">{selectedCount ? selected.length < participantCount ? `Add another (${selectedCount})` : `${selectedCount} added` : 'Add'}</span>
-              </button>
-            {/each}
-          </div>
-        </section>
+        </details>
       </div>
 
       <footer class="setup-footer">
@@ -344,7 +378,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <div class="participant-list">
             {#each selected as seat, index (seat.id)}
               {@const activity = activities.find((item) => item.participant === index)}
-              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-model" title={selectedModels[index]?.name}>{selectedModels[index]?.name}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
+              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-personality">{personalityFor(seat.personalityId).label}</small><small class="participant-model" title={selectedModels[index]?.name}>{selectedModels[index]?.name}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
             {/each}
             <div class="participant you" class:offline={!running}><span class="status-dot">●</span><span><b>You</b><small>{running ? 'online' : 'offline'}</small></span></div>
           </div>
@@ -357,7 +391,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
               <div><dt>How it ends</dt><dd>{run.mode === 'vote' ? 'Take a vote' : 'Reach an agreement'}</dd></div>
               <div><dt>Web search</dt><dd>{run.research ? 'On' : 'Off'}</dd></div>
             </dl>
-            <ul>{#each selectedModels as model, index (selected[index].id)}<li><b>{participantName(index)}</b><span>{model.name}</span></li>{/each}</ul>
+            <ul>{#each selected as seat, index (seat.id)}{@const model = models.find((item) => item.id === seat.modelId)}<li><b>{participantName(index)}</b><span>{personalityFor(seat.personalityId).label} · {model?.name ?? seat.modelId}</span></li>{/each}</ul>
           </details>
         </aside>
 
@@ -463,10 +497,14 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   .auth-copy { font-size: 11px; }
   .auth-button:disabled { color: var(--ink-muted); background: var(--chrome); }
   .auth-button { margin-top: 5px; padding: 4px 8px; color: #fff; background: var(--title-blue); border: 2px outset #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
-  .setup-workspace { min-height: 0; display: grid; grid-template-columns: minmax(330px, .9fr) minmax(420px, 1.25fr); gap: 8px; padding: 8px; overflow: hidden; }
-  .room-builder, .directory { min-height: 0; padding: 12px; border: 2px inset #fff; background: var(--chrome-light); }
+  .setup-workspace { min-height: 0; display: grid; grid-template-rows: auto auto; align-content: start; gap: 8px; padding: 8px; overflow: auto; }
+  .room-builder, .room-settings { min-height: 0; padding: 12px; border: 2px inset #fff; background: var(--chrome-light); }
   .room-builder { overflow: auto; }
-  .directory { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+  .room-settings { overflow: auto; }
+  .room-settings[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  .room-settings summary { color: var(--title-blue); font-weight: 700; cursor: pointer; }
+  .room-settings-content { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; margin-top: 10px; }
+  .directory { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); padding: 10px; border: 1px solid #aaa9a1; background: var(--chrome-light); }
   .field-label, .search-field > span, .sort-field > span, .turn-field > span { display: block; margin: 13px 0 5px; font-weight: 700; }
   textarea, input { width: 100%; color: var(--ink); background: var(--pane-inset); border: 2px inset #fff; padding: 7px 8px; }
   textarea::placeholder, input::placeholder { color: var(--ink-tertiary); opacity: 1; }
@@ -496,10 +534,11 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   .selected-heading { display: flex; justify-content: space-between; gap: 8px; padding: 7px 8px; background: var(--chrome); border-bottom: 1px solid #aaa9a1; }
   .selected-heading h3 { margin: 0; font-size: 12px; }
   .selected-heading span { color: var(--ink-secondary); font-size: 10px; }
-  .selected-list { max-height: 152px; overflow: auto; }
-  .selected-person { min-height: 34px; display: grid; grid-template-columns: auto minmax(0, .7fr) minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 5px 7px; border-bottom: 1px dotted #aaa9a1; }
+  .selected-list { max-height: 210px; overflow: auto; }
+  .selected-person { min-height: 34px; display: grid; grid-template-columns: auto minmax(0, .8fr) minmax(0, .7fr) minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 5px 7px; border-bottom: 1px dotted #aaa9a1; }
   .selected-person b, .selected-person > span:not(.status-dot) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .selected-person button { padding: 2px 6px; color: var(--link-blue); background: transparent; border: 0; text-decoration: underline; cursor: pointer; }
+  .selected-actions { display: flex; }
   .empty-state { min-height: 72px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; color: var(--ink-secondary); }
   .empty-state p, .empty-state small { display: grid; margin: 0; }
   .empty-state small { color: var(--ink-tertiary); }
@@ -532,10 +571,11 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   .chat-layout { min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr); overflow: hidden; }
   .participants { min-height: 0; display: flex; flex-direction: column; padding: 10px; overflow: auto; border-right: 1px solid #9d9d97; background: var(--chrome-light); }
   .participant-list { margin-top: 6px; }
-  .participant { min-height: 45px; display: flex; align-items: flex-start; gap: 7px; padding: 7px 3px; border-bottom: 1px dotted #aaa9a1; }
+  .participant { min-height: 55px; display: flex; align-items: flex-start; gap: 7px; padding: 7px 3px; border-bottom: 1px dotted #aaa9a1; }
   .participant > span:last-child { min-width: 0; display: grid; }
   .participant b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--link-blue); font-size: 11px; }
   .participant small { margin-top: 2px; overflow: hidden; color: var(--ink-tertiary); text-overflow: ellipsis; white-space: nowrap; }
+  .participant-personality { color: var(--screen-red) !important; font-size: 10px; }
   .participant-model { font-size: 10px; }
   .participant.you b { color: var(--screen-red); }
   .participant.offline .status-dot { color: var(--ink-muted); }

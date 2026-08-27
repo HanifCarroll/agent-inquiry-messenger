@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, requestApiKey, openingPrompt, retryRateLimited, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
-import { SCREEN_NAME_POOL, screenNames, validScreenNames } from '../src/lib/identity';
+import { CHAT_VOICES, SCREEN_NAME_POOL, personalityIds, validPersonalityIds, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
 import { parseJsonl, validRunFilename } from '../src/lib/server/storage';
 import { registerSession, sendToSession } from '../src/lib/server/sessions';
@@ -34,9 +34,18 @@ test('formats model-visible proposals without internal hashes', () => {
 test('uses exactly 100 unique short screen names and random selections', () => {
   expect(SCREEN_NAME_POOL).toHaveLength(100);
   expect(new Set(SCREEN_NAME_POOL).size).toBe(100);
-  expect(SCREEN_NAME_POOL.every(name => name.length <= 20)).toBe(true);
+  expect(SCREEN_NAME_POOL.every(name => name.length <= 20 && name === name.toLowerCase())).toBe(true);
   expect(screenNames(5)).toSatisfy(names => validScreenNames(names, 5));
   expect(screenNames(100)).toHaveLength(100);
+});
+
+test('validates unique personality assignments', () => {
+  expect(CHAT_VOICES).toHaveLength(6);
+  expect(CHAT_VOICES.every(({ id, label }) => id === id.toLowerCase() && label === label.toLowerCase())).toBe(true);
+  expect(validPersonalityIds(personalityIds(3), 3)).toBe(true);
+  expect(validPersonalityIds([CHAT_VOICES[0].id, CHAT_VOICES[0].id], 2)).toBe(false);
+  expect(validPersonalityIds([CHAT_VOICES[0].id], 2)).toBe(false);
+  expect(validPersonalityIds(['not-a-personality'], 1)).toBe(false);
 });
 
 test('validates supplied aliases at the trust boundary', () => {
@@ -48,13 +57,19 @@ test('validates supplied aliases at the trust boundary', () => {
 
 test('requires short ordinary AIM chat without visible decision protocol', () => {
   expect(SYSTEM_PROMPT).toContain('no more than 35 words total');
+  expect(SYSTEM_PROMPT).toContain('Use lowercase only');
+  expect(SYSTEM_PROMPT).toContain('intentional harmless misspelling');
   expect(SYSTEM_PROMPT).toContain('plain text only');
   expect(SYSTEM_PROMPT).toContain('Do not use formal debate language');
   expect(SYSTEM_PROMPT).toContain('Never use Markdown, JSON, labels, decision metadata');
 });
 
+test('guarantees participant content is lowercase before emitting it', () => {
+  expect(normalizeParticipantContent('  Hi There, IMO!  ')).toBe('hi there, imo!');
+});
+
 test('shows each participant the room transcript before every reply', () => {
-  const transcript = 'PixelPickle: my pick is Superbad';
+  const transcript = 'pixelpickle: my pick is Superbad';
   expect(openingPrompt('Best comedy?', transcript, false)).toContain(transcript);
   expect(debatePrompt('Best comedy?', transcript)).toContain('including the newest message');
   expect(ballotPrompt('Best comedy?', transcript, '- Superbad')).toContain(transcript);

@@ -10,6 +10,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "start": "vite preview",
+    "dogfood": "bun scripts/dogfood.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test"
   },

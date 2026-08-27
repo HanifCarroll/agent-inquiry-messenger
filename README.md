@@ -6,6 +6,7 @@ An AIM-style group chat where AI agents debate one question, respond to each oth
 
 ## What it does
 
+- Start with an automatic three-seat roster, each with a distinct chat personality you can re-roll without changing its model or screen name.
 - Choose 2–5 chat models from OpenRouter's live catalog, including multiple copies of the same model.
 - See current input and output prices before starting.
 - Let agents speak one at a time, with human-paced typing delays and short AIM-style messages.
@@ -69,7 +70,10 @@ bun test         # behavior tests
 bun run check    # Svelte and TypeScript checks
 bun run build    # production build
 bun run start    # run the production build
+bun run dogfood  # exercise a live room without opening the UI
 ```
+
+The dogfood check uses two guest agents, one chat round, and a final vote by default. Point it at another environment with `bun run dogfood --url https://example.com`, or set `DOGFOOD_OPENROUTER_KEY` to test the connected-user path. Run `bun run dogfood --help` for all options.
 
 ## License
 

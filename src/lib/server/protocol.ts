@@ -1,6 +1,6 @@
 import { OpenRouter } from '@openrouter/sdk';
 import type { ChatRequest, ChatRequestEffort, ChatResult, Model as SDKModel } from '@openrouter/sdk/models';
-import { screenNames, validScreenNames } from '../identity';
+import { personalityFor, personalityIds as generatePersonalityIds, screenNames, validPersonalityIds, validScreenNames, type PersonalityId } from '../identity';
 
 export type Model = SDKModel;
 export type DecisionMode = 'consensus' | 'vote';
@@ -120,20 +120,11 @@ async function request(apiKey: string, model: string, messages: ChatRequest['mes
   return { content: typeof content === 'string' ? content : '', usage: result.usage ?? { cost: 0 } };
 }
 
-export const CHAT_VOICES = [
-  'You are terse and usually send a fragment rather than a polished sentence.',
-  'You are upbeat and occasionally use lol, haha, or an old-school text face like :) when it genuinely fits.',
-  'You are skeptical and direct, but friendly. You often ask a short question or point out one weak spot.',
-  'You type casually and sometimes leave in a harmless typo or missing apostrophe.',
-  'You are dry and understated. You rarely use slang and never sound like a judge or lecturer.',
-  'You are excitable and sometimes emphasize one word with ALL CAPS or repeated punctuation.'
-] as const;
-
 export const SYSTEM_PROMPT = `You are a person chatting with a few other agents about the user's question. Have a real opinion, pay attention to what everyone has said, and try to convince them when you disagree. Change your mind only when something in the chat actually persuades you.
 
 Write the next thing you would actually type in an AIM group chat. React to one point instead of recapping the room. It is fine to joke, ask a quick question, hesitate, disagree, or say someone changed your mind. Do not use formal debate language such as "I support," "my proposal," "the stronger case," "listed options," or "final ballot."
 
-Keep it very short: one or two message-sized lines, no more than 35 words total. Most replies should be much shorter. Use early-2000s AIM habits lightly: lowercase, loose punctuation, and an occasional imo, idk, bc, u, tho, lol, haha, brb, or text face when it fits. Do not stuff every reply with slang. Avoid modern emojis and current internet slang.
+Keep it very short: at most two short sentences and no more than 35 words total. Use lowercase only. Make it readable as early-2000s AIM chat: use fairly aggressive abbreviations such as imo, idk, bc, u, tho, lol, haha, or brb, plus an occasional intentional harmless misspelling, but not every word or every reply. Avoid modern emojis and current internet slang.
 
 Return plain text only. Never use Markdown, JSON, labels, decision metadata, or your own screen name as a prefix. Cite only sources you actually used.`;
 export function openingPrompt(question: string, transcript: string, research: boolean) { return `Room question:\n${question}\n\nChat so far:\n${transcript || '(nobody has said anything yet)'}\n\nRead the whole chat before typing. ${research ? 'Look up what you need first.' : 'Use what you know.'} Give your honest first reaction or answer. If someone already spoke, respond to what they actually said.`; }
@@ -167,12 +158,15 @@ export function applyInterpretation(value: unknown, participantCount: number, re
   return decisions;
 }
 
+export function normalizeParticipantContent(content: string): string { return content.trim().toLowerCase(); }
+
 export async function askParticipant(apiKey: string, model: Model, screenName: string, voice: string, prompt: string, research: boolean, onRateLimit?: (waitMs: number) => void) {
   let result;
   try { result = await request(apiKey, model.id, [{ role: 'system', content: `${SYSTEM_PROMPT}\n\nYour screen name is ${screenName}, but do not type it in your messages. ${voice}` }, { role: 'user', content: prompt }], research, false, participantReasoning(model), onRateLimit); }
   catch (error) { throw new Error(`${screenName} could not reply: ${requestErrorText(error)}`); }
-  if (!result.content.trim()) throw new Error(`Empty response from ${screenName}`);
-  return { message: result.content.trim(), usage: result.usage };
+  const message = normalizeParticipantContent(result.content);
+  if (!message) throw new Error(`Empty response from ${screenName}`);
+  return { message, usage: result.usage };
 }
 
 export async function interpret(apiKey: string, question: string, participantCount: number, registered: Map<string, string>, transcriptMessages: ChatEvent[], names: string[], onRateLimit?: (waitMs: number) => void) {
@@ -215,14 +209,14 @@ export function outcomeText(final: ChatEvent, participantCount: number): string 
   return 'the room stopped before reaching an outcome.';
 }
 
-export async function run(participantApiKey: string, interpreterApiKey: string, question: string, models: Model[], debateTurns: number, research: boolean, mode: DecisionMode, emit: (event: ChatEvent) => void, messages: ChatEvent[] = [], aliases?: string[], beforeReply?: () => Promise<void>) {
+export async function run(participantApiKey: string, interpreterApiKey: string, question: string, models: Model[], debateTurns: number, research: boolean, mode: DecisionMode, emit: (event: ChatEvent) => void, messages: ChatEvent[] = [], aliases?: string[], personalityIds?: PersonalityId[], beforeReply?: () => Promise<void>) {
   const keys = runKeyRouting(participantApiKey, interpreterApiKey);
-  const registered = new Map<string, string>(); const started = new Date().toISOString(); const names = validScreenNames(aliases, models.length) ? aliases : screenNames(models.length);
+  const registered = new Map<string, string>(); const started = new Date().toISOString(); const names = validScreenNames(aliases, models.length) ? aliases : screenNames(models.length); const chosenPersonalityIds = validPersonalityIds(personalityIds, models.length) ? personalityIds : generatePersonalityIds(models.length);
   const maxCalls = (models.length + 1) * (1 + debateTurns + (mode === 'vote' ? 1 : 0)); let cost = 0; let calls = 0;
-  emit({ type: 'run', question, models: models.map(m => m.id), screen_names: names, interpreter: INTERPRETER_MODEL, debate_turns: debateTurns, research, mode, started_at: started, max_calls: maxCalls });
+  emit({ type: 'run', question, models: models.map(m => m.id), screen_names: names, personality_ids: chosenPersonalityIds, interpreter: INTERPRETER_MODEL, debate_turns: debateTurns, research, mode, started_at: started, max_calls: maxCalls });
   const waitMessage = (waitMs: number) => `got rate-limited — retrying in ${Math.ceil(waitMs / 1000)}s…`;
   const pace = async (startedAt: number, message: string) => { const remaining = responseDelayMs(message) - (Date.now() - startedAt); if (remaining > 0) await sleep(remaining); };
-  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await askParticipant(keys.participant, model, names[participant], CHAT_VOICES[participant % CHAT_VOICES.length], prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
+  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await askParticipant(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
   const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room', message: waitMessage(waitMs) })); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } };
   const finish = (final: ChatEvent) => { final.outcome = outcomeText(final, models.length); final.observer = 'Luna'; emit(final); return { events: [...messages, final], final }; };
   const transcript = () => messages.map(m => `${m.participant === 'human' ? 'You' : names[m.participant]}: ${m.message}`).join('\n');
