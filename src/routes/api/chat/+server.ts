@@ -59,7 +59,7 @@ export async function POST({ request, platform, getClientAddress }) {
           const listed = await messagesBinding.list({ prefix: `room:${runId}:` });
           for (const item of listed.keys) if (!seen.has(item.name)) { const message = await messagesBinding.get(item.name); if (message) { seen.add(item.name); addHuman(message); } }
         };
-        try { await run(participantApiKey, interpreterApiKey, question, resolvedModels, debateTurns, research, mode, emit, conversation, aliases, personalityIds, pollHuman); }
+        try { await run(participantApiKey, interpreterApiKey, question, resolvedModels, debateTurns, research, mode, emit, conversation, aliases, personalityIds, pollHuman, undefined, guest ? available.filter(model => !resolvedModels.some(selectedModel => selectedModel.id === model.id)) : []); }
         catch (error) { emit({ type: 'error', error: error instanceof Error ? error.message : 'The room stopped unexpectedly.', calls: events.filter(event => event.type === 'message' && event.participant !== 'human').length }); }
         finally { unregister(); if (!platform) { try { emit({ type: 'saved', filename: await saveRun(events) }); } catch (error) { emit({ type: 'error', error: error instanceof Error ? error.message : 'Could not save run' }); } } controller.close(); }
       }

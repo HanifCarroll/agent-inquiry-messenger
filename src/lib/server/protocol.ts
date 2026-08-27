@@ -210,39 +210,49 @@ export function outcomeText(final: ChatEvent, participantCount: number): string 
   return 'the room stopped before reaching an outcome.';
 }
 
-export async function run(participantApiKey: string, interpreterApiKey: string, question: string, models: Model[], debateTurns: number, research: boolean, mode: DecisionMode, emit: (event: ChatEvent) => void, messages: ChatEvent[] = [], aliases?: string[], personalityIds?: PersonalityId[], beforeReply?: () => Promise<void>, participantReply = askParticipant) {
+export async function run(participantApiKey: string, interpreterApiKey: string, question: string, models: Model[], debateTurns: number, research: boolean, mode: DecisionMode, emit: (event: ChatEvent) => void, messages: ChatEvent[] = [], aliases?: string[], personalityIds?: PersonalityId[], beforeReply?: () => Promise<void>, participantReply = askParticipant, replacementModels: Model[] = []) {
   const keys = runKeyRouting(participantApiKey, interpreterApiKey);
   const registered = new Map<string, string>(); const started = new Date().toISOString(); const names = validScreenNames(aliases, models.length) ? aliases : screenNames(models.length); const chosenPersonalityIds = validPersonalityIds(personalityIds, models.length) ? personalityIds : generatePersonalityIds(models.length);
   const maxCalls = (models.length + 1) * (1 + debateTurns + (mode === 'vote' ? 1 : 0)); let cost = 0; let calls = 0;
   emit({ type: 'run', question, models: models.map(m => m.id), screen_names: names, personality_ids: chosenPersonalityIds, interpreter: INTERPRETER_MODEL, debate_turns: debateTurns, research, mode, started_at: started, max_calls: maxCalls });
   const waitMessage = (waitMs: number) => `got rate-limited — retrying in ${Math.ceil(waitMs / 1000)}s…`;
   const pace = async (startedAt: number, message: string) => { const remaining = responseDelayMs(message) - (Date.now() - startedAt); if (remaining > 0) await sleep(remaining); };
-  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await participantReply(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
+  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await participantReply(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, model_name: model.name, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
   const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room', message: waitMessage(waitMs) })); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } finally { emit({ type: 'activity', status: 'done', phase, rotation, participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Luna', message: '' }); } };
   const finish = (final: ChatEvent) => { final.outcome = outcomeText(final, models.length); final.observer = 'Luna'; emit(final); return { events: [...messages, final], final }; };
   const transcript = () => messages.map(m => `${m.participant === 'human' ? 'You' : names[m.participant]}: ${m.message}`).join('\n');
-  const inactive = new Set<number>();
+  const inactive = new Set<number>(); const seatModels = [...models]; let replacementIndex = 0;
   const reply = async (phase: string, rotation: number, participant: number, prompt: string, useResearch = false) => {
-    const model = models[participant];
-    emit({ type: 'activity', phase, rotation, participant, model: model.id, screen_name: names[participant], message: useResearch ? 'is looking something up…' : 'is typing…' });
-    try {
-      const result = await new Promise<Awaited<ReturnType<typeof consume>>>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`${names[participant]} timed out`)), PARTICIPANT_TIMEOUT_MS);
-        (async () => { try { await beforeReply?.(); resolve(await consume(model, participant, prompt, useResearch)); } catch (error) { reject(error); } finally { clearTimeout(timer); } })();
-      });
-      await pace(Date.now(), result.message);
-      return result;
-    } catch (reason) {
-      inactive.add(participant);
-      emit({ type: 'error', error: reason instanceof Error ? reason.message : `${names[participant]} could not reply`, participant });
-      return null;
-    } finally {
-      emit({ type: 'activity', status: 'done', phase, rotation, participant, model: model.id, screen_name: names[participant], message: '' });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const model = seatModels[participant];
+      emit({ type: 'activity', phase, rotation, participant, model: model.id, model_name: model.name, screen_name: names[participant], message: useResearch ? 'is looking something up…' : 'is typing…' });
+      try {
+        const result = await new Promise<Awaited<ReturnType<typeof consume>>>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`${names[participant]} timed out`)), PARTICIPANT_TIMEOUT_MS);
+          (async () => { try { await beforeReply?.(); resolve(await consume(model, participant, prompt, useResearch)); } catch (error) { reject(error); } finally { clearTimeout(timer); } })();
+        });
+        await pace(Date.now(), result.message);
+        return result;
+      } catch (reason) {
+        const replacement = replacementModels.slice(replacementIndex).find(candidate => !seatModels.some(used => used.id === candidate.id));
+        if (attempt === 0 && replacement) {
+          replacementIndex = replacementModels.indexOf(replacement) + 1;
+          seatModels[participant] = replacement;
+          emit({ type: 'error', recovered: true, error: reason instanceof Error ? reason.message : `${names[participant]} could not reply`, participant, model: model.id, model_name: model.name, replacement_model: replacement.id, replacement_model_name: replacement.name });
+          continue;
+        }
+        inactive.add(participant);
+        emit({ type: 'error', error: reason instanceof Error ? reason.message : `${names[participant]} could not reply`, participant, model: model.id, model_name: model.name });
+        return null;
+      } finally {
+        emit({ type: 'activity', status: 'done', phase, rotation, participant, model: model.id, model_name: model.name, screen_name: names[participant], message: '' });
+      }
     }
+    return null;
   };
   const activeCount = () => models.length - inactive.size;
   const addMessage = (phase: string, rotation: number, participant: number, result: Awaited<ReturnType<typeof consume>>) => {
-    const event = { type: 'message', phase, rotation, participant, model: models[participant].id, screen_name: names[participant], message: result.message, usage: result.usage };
+    const event = { type: 'message', phase, rotation, participant, model: seatModels[participant].id, model_name: seatModels[participant].name, screen_name: names[participant], message: result.message, usage: result.usage };
     messages.push(event); emit(event);
   };
   try {

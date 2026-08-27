@@ -117,8 +117,12 @@ async function main() {
       if (Number.isInteger(event.participant)) messages.add(event.participant);
       console.log(`${event.screen_name ?? `Agent ${event.participant + 1}`}: ${event.message}`);
     } else if (event.type === 'error') {
-      streamError = event.error ?? 'Unknown room error';
-      console.error(`ERROR: ${streamError}`);
+      if (event.recovered) {
+        console.warn(`RECOVERED: ${event.error ?? 'Agent failed'}; replaced ${event.model} with ${event.replacement_model}`);
+      } else {
+        streamError = event.error ?? 'Unknown room error';
+        console.error(`ERROR: ${streamError}`);
+      }
     } else if (event.type === 'final') {
       final = event;
       console.log(`\nLuna: ${event.outcome}`);

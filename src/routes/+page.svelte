@@ -162,11 +162,15 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     return (run?.screen_names?.[participant] ?? participantNames[participant] ?? `agent${participant + 1}`).toLowerCase();
   }
 
+  function participantModel(participant: number) {
+    return messages.toReversed().find((event) => event.participant === participant && event.model)?.model_name ?? selectedModels[participant]?.name;
+  }
+
   async function handleEvent(event: Event) {
     const shouldFollow = followLatest;
     events = [...events, event];
     if (event.type === 'saved') saved = event.filename;
-    if (event.type === 'error') error = event.error ?? 'The room stopped unexpectedly. Start a new chat to try again.';
+    if (event.type === 'error' && !event.recovered) error = event.error ?? 'The room stopped unexpectedly. Start a new chat to try again.';
     await tick();
     if (shouldFollow && transcriptElement) transcriptElement.scrollTop = transcriptElement.scrollHeight;
   }
@@ -381,7 +385,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <div class="participant-list">
             {#each selected as seat, index (seat.id)}
               {@const activity = activities.find((item) => item.participant === index)}
-              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-personality">{personalityFor(seat.personalityId).label}</small><small class="participant-model" title={selectedModels[index]?.name}>{selectedModels[index]?.name}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
+              <div class="participant" class:working={Boolean(activity)} class:offline={!running}><span class="status-dot">●</span><span><b>{participantName(index)}</b><small class="participant-personality">{personalityFor(seat.personalityId).label}</small><small class="participant-model" title={activity?.model_name ?? participantModel(index)}>{activity?.model_name ?? participantModel(index)}</small><small class="participant-status">{activity?.status === 'rate_limit' ? 'waiting…' : activity ? 'typing…' : running ? 'online' : 'offline'}</small></span></div>
             {/each}
             <div class="participant you" class:offline={!running}><span class="status-dot">●</span><span><b>You</b><small>{running ? 'online' : 'offline'}</small></span></div>
           </div>

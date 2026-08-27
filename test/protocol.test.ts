@@ -157,15 +157,16 @@ test('paces replies and follows the transcript only near the bottom', () => {
   expect(isNearBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 400 })).toBe(false);
 });
 
-test('continues past a failed first participant without leaving typing activity', async () => {
+test('replaces a failed first model and emits the replacement reply', async () => {
   const model = (id: string) => ({ id, name: id, pricing: { prompt: '0', completion: '0' }, architecture: { inputModalities: ['text'], outputModalities: ['text'] } }) as Model;
   const events: any[] = [];
   const result = await run('participant', 'interpreter', 'question', [model('a'), model('b')], 1, false, 'consensus', event => events.push(event), [], ['alpha', 'bravo'], personalityIds(2), undefined, async (_key, selected) => {
-    if (selected.id === 'a') throw new Error('first participant failed');
+    if (selected.id !== 'c') throw new Error('participant model failed');
     return { message: 'i agree', usage: { cost: 0 } };
-  });
+  }, [model('c')]);
   expect(result.final.status).toBe('NO_CONSENSUS');
-  expect(events.some(event => event.type === 'message' && event.participant === 1)).toBe(true);
+  expect(events.some(event => event.type === 'message' && event.participant === 0 && event.model === 'c')).toBe(true);
+  expect(events.some(event => event.type === 'activity' && event.participant === 0 && event.model === 'c')).toBe(true);
   expect(events.filter(event => event.type === 'activity' && event.participant === 0).at(-1).status).toBe('done');
 });
 
