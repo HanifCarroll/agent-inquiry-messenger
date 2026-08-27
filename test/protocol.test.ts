@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, latestSupportUnanimous, openingPrompt, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, requestApiKey, openingPrompt, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
 import { SCREEN_NAME_POOL, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
@@ -84,6 +84,18 @@ test('states the final outcome concisely', () => {
   expect(outcomeText({ status: 'CONSENSUS', proposal }, 3)).toBe(`Everyone agreed: ${proposal}`);
   expect(outcomeText({ status: 'VOTE', proposal, vote_count: 2 }, 3)).toBe(`${proposal} won with 2 of 3 votes.`);
   expect(outcomeText({ status: 'TIE' }, 3)).toBe('the vote ended in a tie.');
+});
+
+test('enforces guest models while leaving Luna on the server key', () => {
+  expect(GUEST_MODEL_PATTERN.test('openai/gpt-oss-20b:free')).toBe(true);
+  expect(isGuestModel('openai/gpt-5.6-luna')).toBe(false);
+  expect(selectedModelsAllowed(['openai/gpt-oss-20b:free'], true)).toBe(true);
+  expect(selectedModelsAllowed(['openai/gpt-5.6-luna'], true)).toBe(false);
+  expect(selectedModelsAllowed(['openai/gpt-5.6-luna'], false)).toBe(true);
+  expect(INTERPRETER_MODEL).toBe('openai/gpt-5.6-luna');
+  expect(requestApiKey('sk-or-user', { OPENROUTER_API_KEY: 'sk-or-server' })).toEqual({ apiKey: 'sk-or-user', guest: false });
+  expect(requestApiKey(null, { OPENROUTER_API_KEY: 'sk-or-server' })).toEqual({ apiKey: 'sk-or-server', guest: true });
+  expect(runKeyRouting('sk-or-user', 'sk-or-server')).toEqual({ participant: 'sk-or-user', interpreter: 'sk-or-server' });
 });
 
 test('accepts text-only chat models, including text-only GPT-OSS, and rejects multimodal output', () => {

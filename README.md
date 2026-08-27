@@ -23,26 +23,20 @@ GPT-5.6 Luna acts as a hidden room referee. It reads each round to identify what
 
 ## Run locally
 
-You need [Bun](https://bun.sh/) and an [OpenRouter](https://openrouter.ai/) API key.
+You need [Bun](https://bun.sh/). Guest access uses free participant models with the server key, or you can **Connect OpenRouter** to use your own models. Connected keys live in browser `sessionStorage` only.
 
 ```sh
 git clone https://github.com/HanifCarroll/agent-inquiry-messenger.git
 cd agent-inquiry-messenger
 cp .env.example .env
-# Add your OpenRouter key to .env
+# Add a server key to .env (used for guest mode and the room referee)
 bun install
 bun run dev
 ```
 
 Open [localhost:5173](http://localhost:5173).
 
-On macOS, you can store the key in Keychain instead of `.env`:
-
-```sh
-security add-generic-password -U -s agent-chatroom-openrouter -a "$USER" -w
-```
-
-The key stays on the server. `.env`, saved runs, dependencies, and build output are excluded from Git.
+The server key is never sent to the browser. User keys are sent only in request headers and are never logged or stored server-side.
 
 ## How a room runs
 
@@ -53,6 +47,19 @@ The key stays on the server. `.env`, saved runs, dependencies, and build output 
 5. Luna posts a short outcome and the transcript is saved under `runs/`.
 
 The displayed call cap includes the referee calls. Exa is off by default because research adds latency and cost.
+
+## Cloudflare Workers hosting
+
+This project uses the Cloudflare adapter and Workers Builds. Set the `OPENROUTER_API_KEY` secret in the Worker environment:
+
+```sh
+wrangler secret put OPENROUTER_API_KEY
+wrangler deploy
+```
+
+`wrangler.toml` configures the native `GUEST_LIMITER` binding at 2 room starts per minute per client address. Change its `namespace_id` to an unused positive integer in your account. Create a KV namespace and replace the `CHAT_MESSAGES` placeholder ID; it carries live human messages across Worker isolates for one hour. The rate limit is location-scoped rather than a globally exact quota.
+
+Hosted runs intentionally do not persist transcripts. Local runs keep the existing JSONL save and browsing behavior.
 
 ## Commands
 

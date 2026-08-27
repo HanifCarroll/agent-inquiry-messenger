@@ -1,0 +1,22 @@
+name = "agent-inquiry-messenger"
+main = ".svelte-kit/cloudflare/_worker.js"
+compatibility_date = "2026-08-27"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = ".svelte-kit/cloudflare"
+binding = "ASSETS"
+
+# Replace this with your own namespace ID when deploying a fork.
+[[kv_namespaces]]
+binding = "CHAT_MESSAGES"
+id = "528fd16f3f5747a1bd77fca834dffc45"
+
+# Native Workers rate limiting: 2 room starts per minute per client address.
+[[ratelimits]]
+name = "GUEST_LIMITER"
+namespace_id = "1013"
+
+  [ratelimits.simple]
+  limit = 2
+  period = 60

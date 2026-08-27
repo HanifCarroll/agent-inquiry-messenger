@@ -9,12 +9,12 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "start": "bun ./build/index.js",
+    "start": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test"
   },
   "devDependencies": {
-    "@sveltejs/adapter-node": "5.5.7",
+    "@sveltejs/adapter-cloudflare": "7.2.9",
     "@sveltejs/kit": "2.70.3",
     "@sveltejs/vite-plugin-svelte": "7.3.0",
     "@types/bun": "1.4.0",
@@ -22,7 +22,8 @@
     "svelte": "5.56.10",
     "svelte-check": "4.7.6",
     "typescript": "5.9.3",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "wrangler": "^4.36.0"
   },
   "dependencies": {
     "@openrouter/sdk": "^1.2.50"

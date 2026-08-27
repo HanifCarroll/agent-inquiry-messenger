@@ -9,6 +9,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   import { onMount, tick } from 'svelte';
   import { isNearBottom } from '$lib/chat-ui';
   import { screenNames } from '$lib/identity';
+  import { connectOpenRouter, connectedKey, disconnectOpenRouter, finishOpenRouterConnection } from '$lib/openrouter-auth';
 
   type Model = { id: string; name: string; pricing: { input: number | null; output: number | null } };
   type Event = { type: string; [key: string]: any };
@@ -31,6 +32,8 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   let sendingHuman = $state(false);
   let transcriptElement = $state<HTMLElement>();
   let followLatest = true;
+  let connected = $state(false);
+  let connecting = $state(false);
 
   let roster = $derived.by(() => {
     const tokens = search.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -73,16 +76,27 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   let ready = $derived(Boolean(question.trim()) && selected.length === participantCount);
   let lastMessage = $derived(messages.at(-1));
 
-  onMount(async () => {
+  async function loadModels() {
     try {
-      const response = await fetch('/api/models');
+      const storedKey = connectedKey();
+      const response = await fetch('/api/models', { headers: storedKey ? { 'x-openrouter-key': storedKey } : {} });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       models = data.models;
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not load the OpenRouter agent list. Try refreshing the window.';
     }
+  }
+
+  onMount(async () => {
+    try { connected = await finishOpenRouterConnection() || Boolean(connectedKey()); } catch (reason) { error = reason instanceof Error ? reason.message : 'OpenRouter connection failed.'; }
+    await loadModels();
   });
+
+  async function connect() {
+    connecting = true;
+    try { await connectOpenRouter(); } finally { connecting = false; }
+  }
 
   function setParticipantCount(value: number) {
     participantCount = Math.max(2, Math.min(5, Math.round(value)));
@@ -141,7 +155,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(connectedKey() ? { 'x-openrouter-key': connectedKey() } : {}) },
         body: JSON.stringify({ question, models: selected.map((seat) => seat.modelId), screenNames: participantNames, participantCount, debateTurns, research, mode })
       });
       if (!response.ok) {
@@ -235,6 +249,8 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
           <p class="kicker">Welcome</p>
           <h1 id="setup-title">Start a group chat</h1>
           <p>Ask one question, invite a few AI agents, and watch them talk it through.</p>
+          <p class="auth-copy">{connected ? 'OpenRouter connected — your key stays in this browser session.' : 'Using guest access — free agents only.'}</p>
+          {#if connected}<button type="button" class="auth-button" onclick={() => { disconnectOpenRouter(); connected = false; selected = []; loadModels(); }}>Use guest access</button>{:else}<button type="button" class="auth-button" onclick={connect} disabled={connecting}>{connecting ? 'Connecting…' : 'Connect OpenRouter'}</button>{/if}
         </div>
       </div>
 
@@ -284,7 +300,7 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
         </section>
 
         <section class="directory" aria-labelledby="directory-title">
-          <div class="pane-heading"><h2 id="directory-title">Choose agents</h2><span>{roster.length} available</span></div>
+          <div class="pane-heading"><h2 id="directory-title">Choose agents</h2><span>{connected ? `${roster.length} available` : `${roster.length} free available`}</span></div>
           <div class="directory-tools">
             <label class="search-field" for="search"><span>Find an agent</span><input id="search" bind:value={search} type="search" placeholder="Search models or providers…" /></label>
             <label class="sort-field" for="sort"><span>Sort by</span><select id="sort" bind:value={sort}><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="price-asc">Price low–high</option><option value="price-desc">Price high–low</option></select></label>
@@ -444,6 +460,9 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
   .kicker { margin: 0 0 2px; color: var(--screen-red); font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .setup-heading h1 { margin: 0; color: var(--title-blue); font-size: 22px; line-height: 1.1; }
   .setup-heading p:last-child { margin: 4px 0 0; color: var(--ink-secondary); }
+  .auth-copy { font-size: 11px; }
+  .auth-button:disabled { color: var(--ink-muted); background: var(--chrome); }
+  .auth-button { margin-top: 5px; padding: 4px 8px; color: #fff; background: var(--title-blue); border: 2px outset #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
   .setup-workspace { min-height: 0; display: grid; grid-template-columns: minmax(330px, .9fr) minmax(420px, 1.25fr); gap: 8px; padding: 8px; overflow: hidden; }
   .room-builder, .directory { min-height: 0; padding: 12px; border: 2px inset #fff; background: var(--chrome-light); }
   .room-builder { overflow: auto; }
