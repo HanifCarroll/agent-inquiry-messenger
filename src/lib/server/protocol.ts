@@ -63,6 +63,7 @@ export function rateLimitWaitMs(error: unknown, now = Date.now()): number | null
 }
 
 const MAX_RATE_LIMIT_RETRIES = 3;
+const PARTICIPANT_TIMEOUT_MS = 61_000;
 export async function retryRateLimited<T>(operation: () => Promise<T>, onRateLimit?: (waitMs: number) => void, waitFor = rateLimitWaitMs, sleepFor = sleep): Promise<T> {
   for (let retry = 0; ; retry++) {
     try { return await operation(); }
@@ -209,53 +210,64 @@ export function outcomeText(final: ChatEvent, participantCount: number): string 
   return 'the room stopped before reaching an outcome.';
 }
 
-export async function run(participantApiKey: string, interpreterApiKey: string, question: string, models: Model[], debateTurns: number, research: boolean, mode: DecisionMode, emit: (event: ChatEvent) => void, messages: ChatEvent[] = [], aliases?: string[], personalityIds?: PersonalityId[], beforeReply?: () => Promise<void>) {
+export async function run(participantApiKey: string, interpreterApiKey: string, question: string, models: Model[], debateTurns: number, research: boolean, mode: DecisionMode, emit: (event: ChatEvent) => void, messages: ChatEvent[] = [], aliases?: string[], personalityIds?: PersonalityId[], beforeReply?: () => Promise<void>, participantReply = askParticipant) {
   const keys = runKeyRouting(participantApiKey, interpreterApiKey);
   const registered = new Map<string, string>(); const started = new Date().toISOString(); const names = validScreenNames(aliases, models.length) ? aliases : screenNames(models.length); const chosenPersonalityIds = validPersonalityIds(personalityIds, models.length) ? personalityIds : generatePersonalityIds(models.length);
   const maxCalls = (models.length + 1) * (1 + debateTurns + (mode === 'vote' ? 1 : 0)); let cost = 0; let calls = 0;
   emit({ type: 'run', question, models: models.map(m => m.id), screen_names: names, personality_ids: chosenPersonalityIds, interpreter: INTERPRETER_MODEL, debate_turns: debateTurns, research, mode, started_at: started, max_calls: maxCalls });
   const waitMessage = (waitMs: number) => `got rate-limited — retrying in ${Math.ceil(waitMs / 1000)}s…`;
   const pace = async (startedAt: number, message: string) => { const remaining = responseDelayMs(message) - (Date.now() - startedAt); if (remaining > 0) await sleep(remaining); };
-  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await askParticipant(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
-  const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room', message: waitMessage(waitMs) })); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } };
+  const consume = async (model: Model, participant: number, prompt: string, useResearch = false) => { calls++; const result = await participantReply(keys.participant, model, names[participant], personalityFor(chosenPersonalityIds[participant]).prompt, prompt, useResearch, waitMs => emit({ type: 'activity', status: 'rate_limit', participant, model: model.id, screen_name: names[participant], message: waitMessage(waitMs) })); cost += Number(result.usage?.cost ?? 0); return result; };
+  const addInterpretation = async (phase: string, rotation: number) => { emit({ type: 'activity', phase: 'interpretation', rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', message: 'checking the room…' }); calls++; try { const result = await interpret(keys.interpreter, question, models.length, registered, messages, names, waitMs => emit({ type: 'activity', status: 'rate_limit', participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Room', message: waitMessage(waitMs) })); cost += Number(result.usage.cost ?? 0); const event = { type: 'interpretation', phase, rotation, model: INTERPRETER_MODEL, screen_name: 'Luna', decisions: result.decisions, usage: result.usage }; emit(event); return result.decisions; } catch (error) { cost += Number((error as any)?.usage?.cost ?? 0); throw error; } finally { emit({ type: 'activity', status: 'done', phase, rotation, participant: 'room', model: INTERPRETER_MODEL, screen_name: 'Luna', message: '' }); } };
   const finish = (final: ChatEvent) => { final.outcome = outcomeText(final, models.length); final.observer = 'Luna'; emit(final); return { events: [...messages, final], final }; };
   const transcript = () => messages.map(m => `${m.participant === 'human' ? 'You' : names[m.participant]}: ${m.message}`).join('\n');
-  try {
-    const opening: PromiseSettledResult<ChatEvent>[] = [];
-    for (let participant = 0; participant < models.length; participant++) {
-      const model = models[participant];
-      try {
-        const typingStarted = Date.now();
-        emit({ type: 'activity', phase: 'opening', participant, model: model.id, screen_name: names[participant], message: research ? 'is looking something up…' : 'is typing…' });
-        await beforeReply?.(); const result = await consume(model, participant, openingPrompt(question, transcript(), research), research);
-        await pace(typingStarted, result.message);
-        const event = { type: 'message', phase: 'opening', rotation: 0, participant, model: model.id, screen_name: names[participant], message: result.message, usage: result.usage };
-        messages.push(event); emit(event); opening.push({ status: 'fulfilled', value: event });
-      } catch (reason) { opening.push({ status: 'rejected', reason }); }
+  const inactive = new Set<number>();
+  const reply = async (phase: string, rotation: number, participant: number, prompt: string, useResearch = false) => {
+    const model = models[participant];
+    emit({ type: 'activity', phase, rotation, participant, model: model.id, screen_name: names[participant], message: useResearch ? 'is looking something up…' : 'is typing…' });
+    try {
+      const result = await new Promise<Awaited<ReturnType<typeof consume>>>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${names[participant]} timed out`)), PARTICIPANT_TIMEOUT_MS);
+        (async () => { try { await beforeReply?.(); resolve(await consume(model, participant, prompt, useResearch)); } catch (error) { reject(error); } finally { clearTimeout(timer); } })();
+      });
+      await pace(Date.now(), result.message);
+      return result;
+    } catch (reason) {
+      inactive.add(participant);
+      emit({ type: 'error', error: reason instanceof Error ? reason.message : `${names[participant]} could not reply`, participant });
+      return null;
+    } finally {
+      emit({ type: 'activity', status: 'done', phase, rotation, participant, model: model.id, screen_name: names[participant], message: '' });
     }
-    const failedOpening = opening.find(result => result.status === 'rejected'); if (failedOpening) throw failedOpening.reason;
+  };
+  const activeCount = () => models.length - inactive.size;
+  const addMessage = (phase: string, rotation: number, participant: number, result: Awaited<ReturnType<typeof consume>>) => {
+    const event = { type: 'message', phase, rotation, participant, model: models[participant].id, screen_name: names[participant], message: result.message, usage: result.usage };
+    messages.push(event); emit(event);
+  };
+  try {
+    for (let participant = 0; participant < models.length; participant++) {
+      const result = await reply('opening', 0, participant, openingPrompt(question, transcript(), research), research);
+      if (result) addMessage('opening', 0, participant, result);
+    }
+    if (activeCount() < 2) return finish({ type: 'final', status: 'NO_CONSENSUS', mode, cost, calls });
     const openingDecisions = await addInterpretation('opening', 0);
     if (mode === 'consensus') { const proposal = latestSupportUnanimous(openingDecisions, models.length); if (proposal) return finish({ type: 'final', status: 'CONSENSUS', mode, proposal, cost, calls }); }
     for (let rotation = 1; rotation <= debateTurns; rotation++) {
       for (let participant = 0; participant < models.length; participant++) {
-        const typingStarted = Date.now();
-        emit({ type: 'activity', phase: 'chat', rotation, participant, model: models[participant].id, screen_name: names[participant], message: 'is typing…' });
-        await beforeReply?.(); const result = await consume(models[participant], participant, debatePrompt(question, transcript()));
-        await pace(typingStarted, result.message);
-        const event = { type: 'message', phase: 'chat', rotation, participant, model: models[participant].id, screen_name: names[participant], message: result.message, usage: result.usage };
-        messages.push(event); emit(event);
+        if (inactive.has(participant)) continue;
+        const result = await reply('chat', rotation, participant, debatePrompt(question, transcript()));
+        if (result) addMessage('chat', rotation, participant, result);
       }
+      if (activeCount() < 2) return finish({ type: 'final', status: 'NO_CONSENSUS', mode, cost, calls });
       const decisions = await addInterpretation('chat', rotation); if (mode === 'consensus') { const proposal = latestSupportUnanimous(decisions, models.length); if (proposal) return finish({ type: 'final', status: 'CONSENSUS', mode, proposal, cost, calls }); }
     }
     if (mode === 'vote') {
       const proposalList = formatProposalList(registered.values());
       for (let participant = 0; participant < models.length; participant++) {
-        const model = models[participant]; const typingStarted = Date.now();
-        emit({ type: 'activity', phase: 'ballot', participant, model: model.id, screen_name: names[participant], message: 'is typing…' });
-        await beforeReply?.(); const result = await consume(model, participant, ballotPrompt(question, transcript(), proposalList));
-        await pace(typingStarted, result.message);
-        const event = { type: 'message', phase: 'ballot', rotation: debateTurns + 1, participant, model: model.id, screen_name: names[participant], message: result.message, usage: result.usage };
-        messages.push(event); emit(event);
+        if (inactive.has(participant)) continue;
+        const result = await reply('ballot', debateTurns + 1, participant, ballotPrompt(question, transcript(), proposalList));
+        if (result) addMessage('ballot', debateTurns + 1, participant, result);
       }
       const decisions = await addInterpretation('ballot', debateTurns + 1); const winner = voteWinner(decisions, new Set(registered.keys())); const supportCount = decisions.filter(decision => decision.type === 'support').length; return finish(winner ? { type: 'final', status: 'VOTE', mode, proposal: winner.proposal, vote_count: winner.count, cost, calls } : { type: 'final', status: supportCount ? 'TIE' : 'NO_WINNER', mode, cost, calls });
     }

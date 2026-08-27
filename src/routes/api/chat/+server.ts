@@ -30,8 +30,12 @@ export async function POST({ request, platform, getClientAddress }) {
   try {
     if (!selectedModelsAllowed(ids, guest)) return json({ error: 'Guests can only use free participant models. Connect OpenRouter to use paid models.' }, { status: 403 });
     const available = await catalog(participantApiKey, guest);
-    const selected = ids.map(id => available.find(model => model.id === id)).filter(Boolean) as Model[];
-    if (selected.length !== ids.length) return json({ error: 'One of your agents is no longer available. Choose another and try again.' }, { status: 400 });
+    const availableById = new Map(available.map(model => [model.id, model]));
+    const replacements = available.filter(model => !ids.includes(model.id));
+    let replacementIndex = 0;
+    const selected = ids.map(id => guest ? availableById.get(id) ?? replacements[replacementIndex++] : availableById.get(id));
+    if (selected.some(model => !model)) return json({ error: 'One of your agents is no longer available. Choose another and try again.' }, { status: 400 });
+    const resolvedModels = selected as Model[];
     const limiter = env?.GUEST_LIMITER;
     if (platform && limiter) {
       const result = await limiter.limit({ key: getClientAddress() });
@@ -55,7 +59,7 @@ export async function POST({ request, platform, getClientAddress }) {
           const listed = await messagesBinding.list({ prefix: `room:${runId}:` });
           for (const item of listed.keys) if (!seen.has(item.name)) { const message = await messagesBinding.get(item.name); if (message) { seen.add(item.name); addHuman(message); } }
         };
-        try { await run(participantApiKey, interpreterApiKey, question, selected, debateTurns, research, mode, emit, conversation, aliases, personalityIds, pollHuman); }
+        try { await run(participantApiKey, interpreterApiKey, question, resolvedModels, debateTurns, research, mode, emit, conversation, aliases, personalityIds, pollHuman); }
         catch (error) { emit({ type: 'error', error: error instanceof Error ? error.message : 'The room stopped unexpectedly.', calls: events.filter(event => event.type === 'message' && event.participant !== 'human').length }); }
         finally { unregister(); if (!platform) { try { emit({ type: 'saved', filename: await saveRun(events) }); } catch (error) { emit({ type: 'error', error: error instanceof Error ? error.message : 'Could not save run' }); } } controller.close(); }
       }

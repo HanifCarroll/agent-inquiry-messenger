@@ -64,7 +64,10 @@ FORM: An authentic two-pane AIM client, chosen over a three-pane consensus conso
     if (!running) return [];
     const current: Record<string, Event> = {};
     for (const event of events) {
-      if (event.type === 'activity' && (Number.isInteger(event.participant) || event.participant === 'room')) current[event.participant] = event;
+      if (event.type === 'activity' && (Number.isInteger(event.participant) || event.participant === 'room')) {
+        if (event.status === 'done' || event.status === 'failed' || event.status === 'complete') delete current[String(event.participant)];
+        else current[event.participant] = event;
+      }
       if (event.type === 'message') delete current[String(event.participant)];
       if (event.type === 'interpretation') delete current.room;
     }

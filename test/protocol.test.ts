@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
+import { applyInterpretation, ballotPrompt, chatCapable, debatePrompt, formatProposalList, GUEST_MODEL_PATTERN, INTERPRETER_MODEL, isGuestModel, latestSupportUnanimous, normalizeParticipantContent, requestApiKey, openingPrompt, retryRateLimited, run, runKeyRouting, outcomeText, participantReasoning, price, proposalId, rateLimitWaitMs, requestErrorText, responseDelayMs, selectedModelsAllowed, SYSTEM_PROMPT, validateInterpretation, voteWinner } from '../src/lib/server/protocol';
 import { isNearBottom } from '../src/lib/chat-ui';
 import { CHAT_VOICES, SCREEN_NAME_POOL, personalityIds, validPersonalityIds, screenNames, validScreenNames } from '../src/lib/identity';
 import type { Model } from '../src/lib/server/protocol';
@@ -155,6 +155,18 @@ test('paces replies and follows the transcript only near the bottom', () => {
   expect(responseDelayMs('short reply', 0.999)).toBeGreaterThan(4400);
   expect(isNearBottom({ scrollHeight: 1000, scrollTop: 570, clientHeight: 400 })).toBe(true);
   expect(isNearBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 400 })).toBe(false);
+});
+
+test('continues past a failed first participant without leaving typing activity', async () => {
+  const model = (id: string) => ({ id, name: id, pricing: { prompt: '0', completion: '0' }, architecture: { inputModalities: ['text'], outputModalities: ['text'] } }) as Model;
+  const events: any[] = [];
+  const result = await run('participant', 'interpreter', 'question', [model('a'), model('b')], 1, false, 'consensus', event => events.push(event), [], ['alpha', 'bravo'], personalityIds(2), undefined, async (_key, selected) => {
+    if (selected.id === 'a') throw new Error('first participant failed');
+    return { message: 'i agree', usage: { cost: 0 } };
+  });
+  expect(result.final.status).toBe('NO_CONSENSUS');
+  expect(events.some(event => event.type === 'message' && event.participant === 1)).toBe(true);
+  expect(events.filter(event => event.type === 'activity' && event.participant === 0).at(-1).status).toBe('done');
 });
 
 test('delivers messages only to an active run and rejects unsafe filenames', () => {
